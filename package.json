@@ -1,0 +1,25 @@
+{
+  "name": "clinic-erp",
+  "version": "1.0.0",
+  "description": "Enterprise Clinic Resource Planning (ERP) and Management System",
+  "private": true,
+  "scripts": {
+    "dev": "npm run dev:backend & npm run dev:frontend",
+    "dev:backend": "npm --prefix backend run dev",
+    "dev:frontend": "npm --prefix frontend run dev",
+    "build": "npm --prefix backend run build && npm --prefix frontend run build",
+    "test": "npm --prefix backend test && npm --prefix frontend test",
+    "test:e2e": "npm --prefix tests test"
+  },
+  "keywords": [
+    "clinic-erp",
+    "healthcare",
+    "ehr",
+    "hospital-management",
+    "appointments",
+    "pharmacy-inventory",
+    "billing"
+  ],
+  "author": "Clinic ERP Team",
+  "license": "MIT"
+}
