@@ -565,15 +565,24 @@ CREATE TABLE prescriptions (
   created_at                 timestamptz NOT NULL DEFAULT now()
 );
 
+-- `medicine_id`'s `REFERENCES medicines(id)` is added by an `ALTER TABLE`
+-- once the Pharmacy module creates `medicines` (Consultation/E-Prescription
+-- was built first — see docs/DATABASE-SCHEMA.md's changelog) — a table
+-- can't reference one that doesn't exist yet. Until then the API only
+-- accepts `medicine_name_freetext`. `route` (e.g. "oral", "topical") was
+-- added during that same module for the same reason `users.first_name`
+-- was: the original sketch omitted a field an actual prescription form
+-- needs.
 CREATE TABLE prescription_items (
   id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   tenant_id             UUID NOT NULL REFERENCES clinics(id) ON DELETE CASCADE,
   prescription_id       UUID NOT NULL REFERENCES prescriptions(id) ON DELETE CASCADE,
-  medicine_id           UUID REFERENCES medicines(id),
+  medicine_id           UUID,   -- FK to medicines(id) added once the Pharmacy module exists
   medicine_name_freetext text,   -- for medicines not in the tenant's catalog
   dosage                text,
   frequency             text,
   duration              text,
+  route                 text,
   prescribed_quantity   int NOT NULL,
   dispensed_quantity    int NOT NULL DEFAULT 0,
   instructions          text,
@@ -1004,10 +1013,15 @@ INSERT INTO permissions (code, module, description) VALUES
   ('appointments.view',           'appointments',  'View appointments — Doctor is further scoped to their own schedule'),
   ('doctors.view_directory',      'doctors',       'View the read-only doctor directory (name, specialization, fee, schedule) for booking'),
   ('checkin.manage',              'queue',         'Check in patients, manage walk-ins'),
+  ('checkin.view',                'queue',         'View walk-ins/check-ins/encounters — tenant/branch-wide, not row-scoped'),
   ('queue.manage',                'queue',         'Manage queue/token status'),
+  ('queue.view',                  'queue',         'View the queue/token board — tenant/branch-wide, not row-scoped'),
   ('vitals.record',               'vitals',        'Record a vitals reading'),
+  ('vitals.view',                 'vitals',        'View recorded vitals readings — tenant-wide, not row-scoped'),
   ('consultation.manage',         'clinical',      'Create/edit consultation, diagnosis, clinical notes'),
+  ('consultation.view',           'clinical',      'View consultations/clinical notes — Doctor scoped to own, Owner/Nurse tenant-wide'),
   ('prescription.manage',         'clinical',      'Issue e-prescriptions'),
+  ('prescription.view',           'clinical',      'View prescriptions — Doctor scoped to own, Owner/Nurse tenant-wide'),
   ('billing.manage',              'billing',       'Create/edit invoices'),
   ('billing.view_own',            'billing',       'Patient views own invoices'),
   ('payments.record',             'billing',       'Record payments against an invoice'),
@@ -1033,8 +1047,11 @@ INSERT INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id FROM roles r, permissions p WHERE (r.code, p.code) IN (
   ('OWNER','clinic.manage_settings'), ('OWNER','staff.manage'), ('OWNER','patients.register'),
   ('OWNER','patients.view_emr'), ('OWNER','patients.view_demographics'), ('OWNER','appointments.manage'),
-  ('OWNER','appointments.view'), ('OWNER','checkin.manage'),
-  ('OWNER','queue.manage'), ('OWNER','vitals.record'), ('OWNER','billing.manage'),
+  ('OWNER','appointments.view'), ('OWNER','checkin.manage'), ('OWNER','checkin.view'),
+  ('OWNER','queue.manage'), ('OWNER','queue.view'), ('OWNER','vitals.record'), ('OWNER','vitals.view'),
+  ('OWNER','consultation.manage'), ('OWNER','consultation.view'),
+  ('OWNER','prescription.manage'), ('OWNER','prescription.view'),
+  ('OWNER','billing.manage'),
   ('OWNER','payments.record'), ('OWNER','pharmacy.manage_catalog'), ('OWNER','pharmacy.dispense'),
   ('OWNER','lab.manage_catalog'), ('OWNER','lab.order'), ('OWNER','lab.enter_results'),
   ('OWNER','inventory.manage'), ('OWNER','expenses.manage'), ('OWNER','crm.manage'),
@@ -1043,17 +1060,23 @@ SELECT r.id, p.id FROM roles r, permissions p WHERE (r.code, p.code) IN (
 
   ('DOCTOR','doctor.manage_own_profile'), ('DOCTOR','patients.view_emr'),
   ('DOCTOR','patients.view_demographics'), ('DOCTOR','appointments.view'),
-  ('DOCTOR','vitals.record'), ('DOCTOR','consultation.manage'), ('DOCTOR','prescription.manage'),
+  ('DOCTOR','vitals.record'), ('DOCTOR','vitals.view'),
+  ('DOCTOR','checkin.view'), ('DOCTOR','queue.view'),
+  ('DOCTOR','consultation.manage'), ('DOCTOR','consultation.view'),
+  ('DOCTOR','prescription.manage'), ('DOCTOR','prescription.view'),
   ('DOCTOR','lab.order'), ('DOCTOR','billing.view_own'),
 
   ('RECEPTIONIST','patients.register'), ('RECEPTIONIST','patients.view_demographics'),
   ('RECEPTIONIST','appointments.manage'), ('RECEPTIONIST','appointments.view'),
-  ('RECEPTIONIST','doctors.view_directory'), ('RECEPTIONIST','checkin.manage'),
-  ('RECEPTIONIST','queue.manage'), ('RECEPTIONIST','billing.manage'),
+  ('RECEPTIONIST','doctors.view_directory'), ('RECEPTIONIST','checkin.manage'), ('RECEPTIONIST','checkin.view'),
+  ('RECEPTIONIST','queue.manage'), ('RECEPTIONIST','queue.view'), ('RECEPTIONIST','vitals.view'),
+  ('RECEPTIONIST','billing.manage'),
   ('RECEPTIONIST','payments.record'), ('RECEPTIONIST','crm.manage'),
   ('RECEPTIONIST','communications.send'),
 
-  ('NURSE','patients.view_demographics'), ('NURSE','vitals.record'), ('NURSE','queue.manage'),
+  ('NURSE','patients.view_demographics'), ('NURSE','vitals.record'), ('NURSE','vitals.view'),
+  ('NURSE','checkin.view'), ('NURSE','queue.view'),
+  ('NURSE','consultation.view'), ('NURSE','prescription.view'),
   ('NURSE','appointments.view'),
 
   ('LAB_STAFF','lab.order'), ('LAB_STAFF','lab.enter_results'), ('LAB_STAFF','patients.view_demographics'),
