@@ -85,3 +85,25 @@ class SessionSummary(BaseModel):
 class MeResponse(BaseModel):
     user: UserSummary
     permissions: list[str]
+
+
+class InviteInfo(BaseModel):
+    """Returned by both Doctor and Staff Management's create/resend-invite
+    endpoints — the invite mechanism itself lives here in Auth (see
+    StaffInvite), shared by any module that provisions a staff account."""
+
+    invite_expires_at: datetime
+    # Only populated outside `production` — same placeholder-delivery
+    # pattern as OTP's `debug_code` above, until a real Communications
+    # module can deliver this via email/SMS.
+    debug_invite_token: str | None = None
+
+
+class AcceptInviteRequest(BaseModel):
+    clinic_slug: str = Field(..., min_length=1, max_length=100)
+    token: str = Field(..., min_length=1)
+    password: str = Field(..., min_length=8)
+
+
+class AcceptInviteResponse(BaseModel):
+    message: str

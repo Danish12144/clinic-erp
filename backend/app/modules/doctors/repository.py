@@ -5,7 +5,7 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.auth.models import Role, User, UserStatus
-from app.modules.doctors.models import DoctorProfile, StaffInvite, UserBranchAssignment
+from app.modules.doctors.models import DoctorProfile, UserBranchAssignment
 
 
 class DoctorRepository:
@@ -118,6 +118,15 @@ class DoctorRepository:
         page_result = await self._session.execute(page_query.limit(limit).offset(offset))
         return [(row.User, row.DoctorProfile) for row in page_result.all()], total
 
+
+class BranchAssignmentRepository:
+    """Generic to any staff role, not doctor-specific — Staff Management
+    reuses this directly rather than duplicating it. Lives here (not in
+    Auth) because it's about branch scoping, not identity/credentials."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
     async def get_branch_ids(self, user_id: uuid.UUID) -> list[uuid.UUID]:
         result = await self._session.execute(
             select(UserBranchAssignment.branch_id).where(UserBranchAssignment.user_id == user_id)
@@ -129,28 +138,3 @@ class DoctorRepository:
         for branch_id in branch_ids:
             self._session.add(UserBranchAssignment(tenant_id=tenant_id, user_id=user_id, branch_id=branch_id))
         await self._session.flush()
-
-
-class StaffInviteRepository:
-    def __init__(self, session: AsyncSession) -> None:
-        self._session = session
-
-    async def delete_pending_for_user(self, user_id: uuid.UUID) -> None:
-        await self._session.execute(delete(StaffInvite).where(StaffInvite.user_id == user_id, StaffInvite.accepted_at.is_(None)))
-
-    async def create(self, *, tenant_id: uuid.UUID, user_id: uuid.UUID, token_hash: str, expires_at: datetime) -> StaffInvite:
-        invite = StaffInvite(tenant_id=tenant_id, user_id=user_id, token_hash=token_hash, expires_at=expires_at)
-        self._session.add(invite)
-        await self._session.flush()
-        return invite
-
-    async def get_active_by_token_hash(self, token_hash: str) -> StaffInvite | None:
-        result = await self._session.execute(
-            select(StaffInvite).where(StaffInvite.token_hash == token_hash, StaffInvite.accepted_at.is_(None))
-        )
-        return result.scalar_one_or_none()
-
-    async def mark_accepted(self, invite_id: uuid.UUID) -> None:
-        await self._session.execute(
-            update(StaffInvite).where(StaffInvite.id == invite_id).values(accepted_at=datetime.now(timezone.utc))
-        )

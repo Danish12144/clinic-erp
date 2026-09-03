@@ -87,7 +87,7 @@ async def test_accepting_invite_activates_the_account_and_allows_login(
     token = created.json()["invite"]["debug_invite_token"]
 
     accept = await api_client.post(
-        "/api/v1/doctors/accept-invite",
+        "/api/v1/auth/accept-invite",
         json={"clinic_slug": test_clinic.slug, "token": token, "password": "new-password-123"},
     )
     assert accept.status_code == 200
@@ -108,19 +108,19 @@ async def test_accepting_invite_twice_fails_the_second_time(
     token = created.json()["invite"]["debug_invite_token"]
 
     first = await api_client.post(
-        "/api/v1/doctors/accept-invite", json={"clinic_slug": test_clinic.slug, "token": token, "password": "password-123"}
+        "/api/v1/auth/accept-invite", json={"clinic_slug": test_clinic.slug, "token": token, "password": "password-123"}
     )
     assert first.status_code == 200
 
     second = await api_client.post(
-        "/api/v1/doctors/accept-invite", json={"clinic_slug": test_clinic.slug, "token": token, "password": "password-456"}
+        "/api/v1/auth/accept-invite", json={"clinic_slug": test_clinic.slug, "token": token, "password": "password-456"}
     )
     assert second.status_code == 400
 
 
 async def test_accepting_invite_with_wrong_token_fails(api_client: AsyncClient, test_clinic: Clinic) -> None:
     response = await api_client.post(
-        "/api/v1/doctors/accept-invite",
+        "/api/v1/auth/accept-invite",
         json={"clinic_slug": test_clinic.slug, "token": "not-a-real-token", "password": "password-123"},
     )
     assert response.status_code == 400
@@ -141,12 +141,12 @@ async def test_resend_invite_invalidates_the_old_token(
     assert new_token != old_token
 
     stale_attempt = await api_client.post(
-        "/api/v1/doctors/accept-invite", json={"clinic_slug": test_clinic.slug, "token": old_token, "password": "password-123"}
+        "/api/v1/auth/accept-invite", json={"clinic_slug": test_clinic.slug, "token": old_token, "password": "password-123"}
     )
     assert stale_attempt.status_code == 400
 
     fresh_attempt = await api_client.post(
-        "/api/v1/doctors/accept-invite", json={"clinic_slug": test_clinic.slug, "token": new_token, "password": "password-123"}
+        "/api/v1/auth/accept-invite", json={"clinic_slug": test_clinic.slug, "token": new_token, "password": "password-123"}
     )
     assert fresh_attempt.status_code == 200
 
@@ -160,7 +160,7 @@ async def test_resend_invite_on_an_already_active_doctor_conflicts(
     user_id = created.json()["doctor"]["user_id"]
     token = created.json()["invite"]["debug_invite_token"]
     await api_client.post(
-        "/api/v1/doctors/accept-invite", json={"clinic_slug": test_clinic.slug, "token": token, "password": "password-123"}
+        "/api/v1/auth/accept-invite", json={"clinic_slug": test_clinic.slug, "token": token, "password": "password-123"}
     )
 
     response = await api_client.post(f"/api/v1/doctors/{user_id}/invite/resend", headers=owner_headers)
@@ -264,7 +264,7 @@ async def test_deactivate_then_reactivate_doctor(
     user_id = created.json()["doctor"]["user_id"]
     token = created.json()["invite"]["debug_invite_token"]
     await api_client.post(
-        "/api/v1/doctors/accept-invite", json={"clinic_slug": test_clinic.slug, "token": token, "password": "password-123"}
+        "/api/v1/auth/accept-invite", json={"clinic_slug": test_clinic.slug, "token": token, "password": "password-123"}
     )
 
     deactivate = await api_client.post(f"/api/v1/doctors/{user_id}/deactivate", headers=owner_headers)

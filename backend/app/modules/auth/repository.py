@@ -1,11 +1,20 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import func, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import platform_admin_session
-from app.modules.auth.models import OtpCode, Permission, PermissionOverride, RolePermission, User, UserSession
+from app.modules.auth.models import (
+    OtpCode,
+    Permission,
+    PermissionOverride,
+    RolePermission,
+    StaffInvite,
+    User,
+    UserSession,
+    UserStatus,
+)
 from app.modules.tenancy.models import Clinic
 
 
@@ -48,6 +57,16 @@ class UserRepository:
     async def touch_last_login(self, user_id: uuid.UUID) -> None:
         await self._session.execute(
             update(User).where(User.id == user_id).values(last_login_at=datetime.now(timezone.utc))
+        )
+
+    async def activate_with_password(self, user_id: uuid.UUID, *, password_hash: str) -> None:
+        """Used by accept-invite: a freshly invited (INVITED, no
+        password_hash) account sets its own password and flips to ACTIVE
+        in one step."""
+        await self._session.execute(
+            update(User)
+            .where(User.id == user_id)
+            .values(password_hash=password_hash, status=UserStatus.ACTIVE, updated_at=datetime.now(timezone.utc))
         )
 
 
@@ -170,3 +189,28 @@ class SessionRepository:
             .order_by(UserSession.issued_at.desc())
         )
         return list(result.scalars().all())
+
+
+class StaffInviteRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def delete_pending_for_user(self, user_id: uuid.UUID) -> None:
+        await self._session.execute(delete(StaffInvite).where(StaffInvite.user_id == user_id, StaffInvite.accepted_at.is_(None)))
+
+    async def create(self, *, tenant_id: uuid.UUID, user_id: uuid.UUID, token_hash: str, expires_at: datetime) -> StaffInvite:
+        invite = StaffInvite(tenant_id=tenant_id, user_id=user_id, token_hash=token_hash, expires_at=expires_at)
+        self._session.add(invite)
+        await self._session.flush()
+        return invite
+
+    async def get_active_by_token_hash(self, token_hash: str) -> StaffInvite | None:
+        result = await self._session.execute(
+            select(StaffInvite).where(StaffInvite.token_hash == token_hash, StaffInvite.accepted_at.is_(None))
+        )
+        return result.scalar_one_or_none()
+
+    async def mark_accepted(self, invite_id: uuid.UUID) -> None:
+        await self._session.execute(
+            update(StaffInvite).where(StaffInvite.id == invite_id).values(accepted_at=datetime.now(timezone.utc))
+        )

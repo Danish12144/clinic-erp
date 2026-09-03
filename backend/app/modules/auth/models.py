@@ -10,6 +10,12 @@ built later): DoctorProfile, StaffProfile, UserBranchAssignment.
 `User.first_name`/`last_name` were added by migration 0005 (Doctor
 Management), not this module's own migrations — see that migration's
 docstring for why.
+
+`StaffInvite` was also added by migration 0005 (as part of the `doctors`
+module) and relocated here by migration 0006 (Staff Management) — table
+name and columns are unchanged, only the Python model/repository/endpoint
+moved, since "activate an invited account" is a role-agnostic identity
+concern, not something either Doctor or Staff Management should own.
 """
 
 import uuid
@@ -168,3 +174,24 @@ class UserSession(Base):
     issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class StaffInvite(Base):
+    """The "Owner invites staff, staff accept to set credentials" workflow
+    (PRD §5) — table created by migration 0005 (Doctor Management), model
+    relocated here by migration 0006 (Staff Management) since activating an
+    invited account is role-agnostic: Doctor and Staff Management both
+    create rows here, but neither should own the accept-invite endpoint.
+    The token is stored only as a hash; a resend deletes any still-pending
+    row for the user first (see StaffInviteRepository) rather than leaving
+    an old token usable alongside the new one."""
+
+    __tablename__ = "staff_invites"
+
+    id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
+    tenant_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("clinics.id", ondelete="CASCADE"), nullable=False)
+    user_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    token_hash: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

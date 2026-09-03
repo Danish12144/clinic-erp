@@ -120,12 +120,12 @@ async def test_invite_token_from_one_tenant_does_not_activate_against_another_cl
         token = created.json()["invite"]["debug_invite_token"]
 
         cross_attempt = await api_client.post(
-            "/api/v1/doctors/accept-invite", json={"clinic_slug": clinic_b.slug, "token": token, "password": "password-123"}
+            "/api/v1/auth/accept-invite", json={"clinic_slug": clinic_b.slug, "token": token, "password": "password-123"}
         )
         assert cross_attempt.status_code == 400
 
         same_tenant_attempt = await api_client.post(
-            "/api/v1/doctors/accept-invite", json={"clinic_slug": clinic_a.slug, "token": token, "password": "password-123"}
+            "/api/v1/auth/accept-invite", json={"clinic_slug": clinic_a.slug, "token": token, "password": "password-123"}
         )
         assert same_tenant_attempt.status_code == 200
     finally:

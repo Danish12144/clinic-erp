@@ -4,6 +4,8 @@ from fastapi import APIRouter, Depends, Request, status
 
 from app.api.deps import CurrentUser, get_current_user
 from app.modules.auth.schemas import (
+    AcceptInviteRequest,
+    AcceptInviteResponse,
     AccessTokenOnlyResponse,
     LogoutRequest,
     MeResponse,
@@ -69,6 +71,16 @@ async def verify_patient_otp(
         ip_address=request.client.host if request.client else None,
         user_agent=request.headers.get("user-agent"),
     )
+
+
+@router.post("/accept-invite", response_model=AcceptInviteResponse)
+async def accept_invite(
+    payload: AcceptInviteRequest, service: AuthService = Depends(get_auth_service)
+) -> AcceptInviteResponse:
+    """Activates a staff account provisioned by Doctor or Staff Management
+    (see app/modules/auth/service.py::issue_staff_invite) — role-agnostic,
+    unauthenticated (the invited user has no credentials yet)."""
+    return await service.accept_invite(clinic_slug=payload.clinic_slug, token=payload.token, password=payload.password)
 
 
 @router.get("/me", response_model=MeResponse)

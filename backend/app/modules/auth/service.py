@@ -23,11 +23,14 @@ from app.modules.auth.repository import (
     OtpRepository,
     PermissionRepository,
     SessionRepository,
+    StaffInviteRepository,
     TenantResolutionRepository,
     UserRepository,
 )
 from app.modules.auth.schemas import (
+    AcceptInviteResponse,
     AccessTokenOnlyResponse,
+    InviteInfo,
     OtpRequestResponse,
     SessionSummary,
     TokenResponse,
@@ -134,6 +137,30 @@ class AuthService:
 
             await otp_repo.mark_consumed(otp.id)
             return await self._issue_tokens(session, user, device_label, ip_address, user_agent)
+
+    # ---- Staff invite acceptance -----------------------------------------
+    #
+    # Issuance (`issue_staff_invite`, a free function below, not a method)
+    # is called by Doctor/Staff Management from within their own already-open
+    # tenant_session when they provision a new staff account — it doesn't
+    # need AuthService's own session-per-call pattern. Acceptance is the
+    # part that's genuinely pre-authentication (the invited user has no
+    # credentials yet), so it belongs to AuthService alongside staff_login/
+    # verify_patient_otp.
+
+    async def accept_invite(self, *, clinic_slug: str, token: str, password: str) -> AcceptInviteResponse:
+        tenant_id = await self._resolve_tenant_id(clinic_slug)
+        invalid_error = HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid or expired invite")
+
+        async with tenant_session(tenant_id) as session:
+            invite_repo = StaffInviteRepository(session)
+            invite = await invite_repo.get_active_by_token_hash(security.hash_opaque_token(token))
+            if invite is None or invite.expires_at < datetime.now(timezone.utc):
+                raise invalid_error
+
+            await UserRepository(session).activate_with_password(invite.user_id, password_hash=security.hash_password(password))
+            await invite_repo.mark_accepted(invite.id)
+            return AcceptInviteResponse(message="Invite accepted — you can now log in with your new password")
 
     # ---- Shared token issuance / refresh / logout ------------------------
 
@@ -262,3 +289,20 @@ class AuthService:
             if record is None:
                 raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
             await session_repo.revoke(record.id)
+
+
+async def issue_staff_invite(session, *, tenant_id: uuid.UUID, user_id: uuid.UUID) -> InviteInfo:
+    """Called by Doctor/Staff Management from within their own already-open
+    `tenant_session`, right after creating the `User` row for a new staff
+    account — hence taking `session` directly rather than opening one
+    itself, unlike every method on `AuthService`. Deletes any still-pending
+    invite for the user first, so a resend invalidates the previous token
+    rather than leaving two valid at once."""
+    invite_repo = StaffInviteRepository(session)
+    await invite_repo.delete_pending_for_user(user_id)
+    token = security.generate_opaque_token()
+    expires_at = datetime.now(timezone.utc) + timedelta(hours=settings.staff_invite_expire_hours)
+    await invite_repo.create(
+        tenant_id=tenant_id, user_id=user_id, token_hash=security.hash_opaque_token(token), expires_at=expires_at
+    )
+    return InviteInfo(invite_expires_at=expires_at, debug_invite_token=None if settings.is_production else token)

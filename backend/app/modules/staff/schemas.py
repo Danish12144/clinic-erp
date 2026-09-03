@@ -1,14 +1,18 @@
 import re
 import uuid
-from datetime import datetime
-from decimal import Decimal
+from datetime import date, datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
 from app.modules.auth.schemas import InviteInfo
-from app.modules.tenancy.schemas import WorkingHours
 
 _PHONE_PATTERN = re.compile(r"^\+?[0-9][0-9 \-]{6,17}$")
+
+# Deliberately excludes OWNER (not provisioned via any staff-account flow —
+# clinic onboarding is out of scope, PRD §30), DOCTOR (its own module), and
+# PATIENT (not staff at all).
+StaffRoleCode = Literal["RECEPTIONIST", "NURSE", "LAB_STAFF", "PHARMACY_STAFF", "OTHER_STAFF"]
 
 
 def _validate_phone(value: str | None) -> str | None:
@@ -20,16 +24,15 @@ def _validate_phone(value: str | None) -> str | None:
     return value
 
 
-class DoctorCreateRequest(BaseModel):
+class StaffCreateRequest(BaseModel):
+    role_code: StaffRoleCode
     first_name: str = Field(..., min_length=1, max_length=100)
     last_name: str | None = Field(None, max_length=100)
     email: EmailStr | None = None
     phone: str | None = None
-    specialization: str | None = Field(None, max_length=200)
-    registration_number: str | None = Field(None, max_length=100)
-    consultation_fee: Decimal | None = Field(None, ge=0, max_digits=10, decimal_places=2)
-    working_hours: WorkingHours = Field(default_factory=WorkingHours)
-    bio: str | None = Field(None, max_length=2000)
+    employee_code: str | None = Field(None, max_length=50)
+    designation: str | None = Field(None, max_length=200)
+    joining_date: date | None = None
     branch_ids: list[uuid.UUID] = Field(default_factory=list)
 
     @field_validator("phone")
@@ -38,56 +41,51 @@ class DoctorCreateRequest(BaseModel):
         return _validate_phone(value)
 
     @model_validator(mode="after")
-    def require_email_or_phone(self) -> "DoctorCreateRequest":
+    def require_email_or_phone(self) -> "StaffCreateRequest":
         if self.email is None and self.phone is None:
             raise ValueError("provide at least an email address or a phone number")
         return self
 
 
-class DoctorUpdateRequest(BaseModel):
-    """Shared by both the Owner "update any doctor" endpoint and the
-    Doctor "update my own profile" endpoint (PRD §3: Owner has full access,
-    Doctor has full access to their own record only — same field set
-    either way). Branch assignment is deliberately not here — see the
-    dedicated `/branches` endpoint, an Owner-only administrative action."""
+class StaffUpdateRequest(BaseModel):
+    """`role_code` is deliberately not editable here — changing a staff
+    member's role changes their whole permission set and is a bigger
+    operation than a profile edit; not implemented in this module."""
 
     first_name: str | None = Field(None, min_length=1, max_length=100)
     last_name: str | None = Field(None, max_length=100)
-    specialization: str | None = Field(None, max_length=200)
-    registration_number: str | None = Field(None, max_length=100)
-    consultation_fee: Decimal | None = Field(None, ge=0, max_digits=10, decimal_places=2)
-    working_hours: WorkingHours | None = None
-    bio: str | None = Field(None, max_length=2000)
+    employee_code: str | None = Field(None, max_length=50)
+    designation: str | None = Field(None, max_length=200)
+    joining_date: date | None = None
 
     @model_validator(mode="after")
-    def at_least_one_field(self) -> "DoctorUpdateRequest":
+    def at_least_one_field(self) -> "StaffUpdateRequest":
         if not self.model_fields_set:
             raise ValueError("at least one field must be provided")
         return self
 
 
-class DoctorSummary(BaseModel):
+class StaffSummary(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     user_id: uuid.UUID
     tenant_id: uuid.UUID
+    role_code: str
     first_name: str | None
     last_name: str | None
     email: str | None
     phone: str | None
     status: str
-    specialization: str | None
-    registration_number: str | None
-    consultation_fee: Decimal | None
-    working_hours: dict
-    bio: str | None
+    employee_code: str | None
+    designation: str | None
+    joining_date: date | None
     branch_ids: list[uuid.UUID]
     created_at: datetime
     updated_at: datetime
 
 
-class DoctorListResponse(BaseModel):
-    items: list[DoctorSummary]
+class StaffListResponse(BaseModel):
+    items: list[StaffSummary]
     total: int
     limit: int
     offset: int
@@ -97,6 +95,6 @@ class BranchAssignmentRequest(BaseModel):
     branch_ids: list[uuid.UUID] = Field(default_factory=list)
 
 
-class DoctorCreateResponse(BaseModel):
-    doctor: DoctorSummary
+class StaffCreateResponse(BaseModel):
+    staff: StaffSummary
     invite: InviteInfo

@@ -1,14 +1,15 @@
-"""Doctor Management business logic: Owner-driven doctor account
-provisioning (invite -> accept-credentials), profile CRUD (Owner: any
-doctor; Doctor: own record only), branch assignment, and
-activate/deactivate lifecycle. See PRD-ARCHITECTURE.md §3 (permission
-matrix row "Doctor profile management"), §5 (staff invite workflow).
+"""Staff Management business logic: Owner-driven provisioning (invite ->
+accept-credentials, same mechanism Doctor Management uses) for non-doctor
+staff roles, profile CRUD, branch assignment, and activate/deactivate
+lifecycle. See PRD-ARCHITECTURE.md §3 (permission matrix row "Staff, roles
+& permissions" — Owner F, everyone else –).
 
-Reuses `staff.manage` (Owner) and `doctor.manage_own_profile` (Doctor) —
-both already seeded in migration 0001 for exactly this capability row; no
-new permission was needed. Invite issuance/acceptance is Auth's
-`issue_staff_invite`/`AuthService.accept_invite` (see that module) — not
-duplicated here.
+Unlike Doctor Management, there is no self-service "/me" here: the PRD
+matrix gives no role other than Owner any access to this capability, not
+even "own record" — a Receptionist's basic identity is already visible via
+the existing generic `GET /api/v1/auth/me` (Auth module); the
+`employee_code`/`designation`/`joining_date` extension fields are
+Owner-only administrative data.
 """
 
 import uuid
@@ -20,51 +21,45 @@ from app.core.db import tenant_session
 from app.modules.auth.models import UserStatus
 from app.modules.auth.schemas import InviteInfo
 from app.modules.auth.service import issue_staff_invite
-from app.modules.doctors.models import DoctorProfile
-from app.modules.doctors.repository import BranchAssignmentRepository, DoctorRepository
-from app.modules.doctors.schemas import (
-    DoctorCreateRequest,
-    DoctorCreateResponse,
-    DoctorListResponse,
-    DoctorSummary,
-    DoctorUpdateRequest,
-)
+from app.modules.doctors.repository import BranchAssignmentRepository
+from app.modules.staff.models import StaffProfile
+from app.modules.staff.repository import StaffRepository
+from app.modules.staff.schemas import StaffCreateRequest, StaffCreateResponse, StaffListResponse, StaffSummary, StaffUpdateRequest
 from app.modules.tenancy.repository import BranchRepository
 
 
-def _to_summary(user, profile: DoctorProfile, branch_ids: list[uuid.UUID]) -> DoctorSummary:
-    return DoctorSummary(
+def _to_summary(user, profile: StaffProfile, branch_ids: list[uuid.UUID]) -> StaffSummary:
+    return StaffSummary(
         user_id=user.id,
         tenant_id=user.tenant_id,
+        role_code=user.role.code,
         first_name=user.first_name,
         last_name=user.last_name,
         email=user.email,
         phone=user.phone,
         status=user.status.value,
-        specialization=profile.specialization,
-        registration_number=profile.registration_number,
-        consultation_fee=profile.consultation_fee,
-        working_hours=profile.working_hours,
-        bio=profile.bio,
+        employee_code=profile.employee_code,
+        designation=profile.designation,
+        joining_date=profile.joining_date,
         branch_ids=branch_ids,
         created_at=profile.created_at,
         updated_at=profile.updated_at,
     )
 
 
-class DoctorService:
+class StaffService:
     async def _validate_branch_ids(self, session, branch_ids: list[uuid.UUID]) -> None:
         branch_repo = BranchRepository(session)
         for branch_id in branch_ids:
             if await branch_repo.get_by_id(branch_id) is None:
                 raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"Branch '{branch_id}' does not exist")
 
-    async def create_doctor(self, *, tenant_id: uuid.UUID, payload: DoctorCreateRequest) -> DoctorCreateResponse:
+    async def create_staff(self, *, tenant_id: uuid.UUID, payload: StaffCreateRequest) -> StaffCreateResponse:
         async with tenant_session(tenant_id) as session:
-            repo = DoctorRepository(session)
+            repo = StaffRepository(session)
             await self._validate_branch_ids(session, payload.branch_ids)
 
-            role_id = await repo.get_role_id("DOCTOR")
+            role_id = await repo.get_role_id(payload.role_code)
             try:
                 user = await repo.create_user(
                     tenant_id=tenant_id,
@@ -82,11 +77,9 @@ class DoctorService:
             profile = await repo.create_profile(
                 user_id=user.id,
                 tenant_id=tenant_id,
-                specialization=payload.specialization,
-                registration_number=payload.registration_number,
-                consultation_fee=payload.consultation_fee,
-                working_hours=payload.working_hours.model_dump(exclude_none=True),
-                bio=payload.bio,
+                employee_code=payload.employee_code,
+                designation=payload.designation,
+                joining_date=payload.joining_date,
             )
 
             if payload.branch_ids:
@@ -95,36 +88,57 @@ class DoctorService:
                 )
 
             invite = await issue_staff_invite(session, tenant_id=tenant_id, user_id=user.id)
-            return DoctorCreateResponse(doctor=_to_summary(user, profile, payload.branch_ids), invite=invite)
+            # user.role isn't populated on a just-constructed instance the
+            # way a fresh SELECT's joined-load would — payload.role_code is
+            # already the validated, authoritative value for this response.
+            return StaffCreateResponse(
+                staff=StaffSummary(
+                    user_id=user.id,
+                    tenant_id=user.tenant_id,
+                    role_code=payload.role_code,
+                    first_name=user.first_name,
+                    last_name=user.last_name,
+                    email=user.email,
+                    phone=user.phone,
+                    status=user.status.value,
+                    employee_code=profile.employee_code,
+                    designation=profile.designation,
+                    joining_date=profile.joining_date,
+                    branch_ids=payload.branch_ids,
+                    created_at=profile.created_at,
+                    updated_at=profile.updated_at,
+                ),
+                invite=invite,
+            )
 
     async def resend_invite(self, *, tenant_id: uuid.UUID, user_id: uuid.UUID) -> InviteInfo:
         async with tenant_session(tenant_id) as session:
-            repo = DoctorRepository(session)
+            repo = StaffRepository(session)
             found = await repo.get_user_and_profile(user_id)
             if found is None:
-                raise HTTPException(status.HTTP_404_NOT_FOUND, "Doctor not found")
+                raise HTTPException(status.HTTP_404_NOT_FOUND, "Staff member not found")
             user, _ = found
             if user.status != UserStatus.INVITED:
                 raise HTTPException(status.HTTP_409_CONFLICT, "This account already has credentials set")
             return await issue_staff_invite(session, tenant_id=tenant_id, user_id=user_id)
 
-    async def search_doctors(
+    async def search_staff(
         self,
         *,
         tenant_id: uuid.UUID,
+        role_code: str | None,
         query_text: str | None,
-        specialization: str | None,
         include_inactive: bool,
         limit: int,
         offset: int,
-    ) -> DoctorListResponse:
+    ) -> StaffListResponse:
         async with tenant_session(tenant_id) as session:
-            repo = DoctorRepository(session)
+            repo = StaffRepository(session)
             branch_repo = BranchAssignmentRepository(session)
             rows, total = await repo.search(
                 tenant_id=tenant_id,
+                role_code=role_code,
                 query_text=query_text,
-                specialization=specialization,
                 include_inactive=include_inactive,
                 limit=limit,
                 offset=offset,
@@ -133,36 +147,30 @@ class DoctorService:
             for user, profile in rows:
                 branch_ids = await branch_repo.get_branch_ids(user.id)
                 items.append(_to_summary(user, profile, branch_ids))
-            return DoctorListResponse(items=items, total=total, limit=limit, offset=offset)
+            return StaffListResponse(items=items, total=total, limit=limit, offset=offset)
 
-    async def get_doctor(self, *, tenant_id: uuid.UUID, user_id: uuid.UUID) -> DoctorSummary:
+    async def get_staff(self, *, tenant_id: uuid.UUID, user_id: uuid.UUID) -> StaffSummary:
         async with tenant_session(tenant_id) as session:
-            repo = DoctorRepository(session)
+            repo = StaffRepository(session)
             found = await repo.get_user_and_profile(user_id)
             if found is None:
-                raise HTTPException(status.HTTP_404_NOT_FOUND, "Doctor not found")
+                raise HTTPException(status.HTTP_404_NOT_FOUND, "Staff member not found")
             user, profile = found
             branch_ids = await BranchAssignmentRepository(session).get_branch_ids(user_id)
             return _to_summary(user, profile, branch_ids)
 
-    async def get_my_profile(self, *, tenant_id: uuid.UUID, user_id: uuid.UUID) -> DoctorSummary:
-        return await self.get_doctor(tenant_id=tenant_id, user_id=user_id)
-
-    async def _apply_update(self, *, tenant_id: uuid.UUID, user_id: uuid.UUID, payload: DoctorUpdateRequest) -> DoctorSummary:
-        changes = payload.model_dump(exclude_unset=True, exclude={"first_name", "last_name", "working_hours"})
-        if "working_hours" in payload.model_fields_set:
-            changes["working_hours"] = payload.working_hours.model_dump(exclude_none=True) if payload.working_hours else {}
-
+    async def update_staff(self, *, tenant_id: uuid.UUID, user_id: uuid.UUID, payload: StaffUpdateRequest) -> StaffSummary:
+        changes = payload.model_dump(exclude_unset=True, exclude={"first_name", "last_name"})
         user_changes = {}
         for field in ("first_name", "last_name"):
             if field in payload.model_fields_set:
                 user_changes[field] = getattr(payload, field)
 
         async with tenant_session(tenant_id) as session:
-            repo = DoctorRepository(session)
+            repo = StaffRepository(session)
             found = await repo.get_user_and_profile(user_id)
             if found is None:
-                raise HTTPException(status.HTTP_404_NOT_FOUND, "Doctor not found")
+                raise HTTPException(status.HTTP_404_NOT_FOUND, "Staff member not found")
             await repo.update_profile(user_id, **changes)
             await repo.update_user(user_id, **user_changes)
             updated = await repo.get_user_and_profile(user_id)
@@ -170,36 +178,30 @@ class DoctorService:
             branch_ids = await BranchAssignmentRepository(session).get_branch_ids(user_id)
             return _to_summary(updated[0], updated[1], branch_ids)
 
-    async def update_doctor(self, *, tenant_id: uuid.UUID, user_id: uuid.UUID, payload: DoctorUpdateRequest) -> DoctorSummary:
-        return await self._apply_update(tenant_id=tenant_id, user_id=user_id, payload=payload)
-
-    async def update_my_profile(self, *, tenant_id: uuid.UUID, user_id: uuid.UUID, payload: DoctorUpdateRequest) -> DoctorSummary:
-        return await self._apply_update(tenant_id=tenant_id, user_id=user_id, payload=payload)
-
-    async def _set_status(self, *, tenant_id: uuid.UUID, user_id: uuid.UUID, new_status: UserStatus) -> DoctorSummary:
+    async def _set_status(self, *, tenant_id: uuid.UUID, user_id: uuid.UUID, new_status: UserStatus) -> StaffSummary:
         async with tenant_session(tenant_id) as session:
-            repo = DoctorRepository(session)
+            repo = StaffRepository(session)
             found = await repo.get_user_and_profile(user_id)
             if found is None:
-                raise HTTPException(status.HTTP_404_NOT_FOUND, "Doctor not found")
+                raise HTTPException(status.HTTP_404_NOT_FOUND, "Staff member not found")
             await repo.update_user(user_id, status=new_status)
             updated = await repo.get_user_and_profile(user_id)
             assert updated is not None
             branch_ids = await BranchAssignmentRepository(session).get_branch_ids(user_id)
             return _to_summary(updated[0], updated[1], branch_ids)
 
-    async def deactivate_doctor(self, *, tenant_id: uuid.UUID, user_id: uuid.UUID) -> DoctorSummary:
+    async def deactivate_staff(self, *, tenant_id: uuid.UUID, user_id: uuid.UUID) -> StaffSummary:
         return await self._set_status(tenant_id=tenant_id, user_id=user_id, new_status=UserStatus.INACTIVE)
 
-    async def reactivate_doctor(self, *, tenant_id: uuid.UUID, user_id: uuid.UUID) -> DoctorSummary:
+    async def reactivate_staff(self, *, tenant_id: uuid.UUID, user_id: uuid.UUID) -> StaffSummary:
         return await self._set_status(tenant_id=tenant_id, user_id=user_id, new_status=UserStatus.ACTIVE)
 
-    async def set_branches(self, *, tenant_id: uuid.UUID, user_id: uuid.UUID, branch_ids: list[uuid.UUID]) -> DoctorSummary:
+    async def set_branches(self, *, tenant_id: uuid.UUID, user_id: uuid.UUID, branch_ids: list[uuid.UUID]) -> StaffSummary:
         async with tenant_session(tenant_id) as session:
-            repo = DoctorRepository(session)
+            repo = StaffRepository(session)
             found = await repo.get_user_and_profile(user_id)
             if found is None:
-                raise HTTPException(status.HTTP_404_NOT_FOUND, "Doctor not found")
+                raise HTTPException(status.HTTP_404_NOT_FOUND, "Staff member not found")
             await self._validate_branch_ids(session, branch_ids)
             await BranchAssignmentRepository(session).set_branch_assignments(
                 tenant_id=tenant_id, user_id=user_id, branch_ids=branch_ids
