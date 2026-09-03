@@ -1046,6 +1046,7 @@ INSERT INTO permissions (code, module, description) VALUES
   ('crm.manage',                  'crm',            'Manage leads and follow-ups'),
   ('communications.send',         'communications', 'Send patient/lead communications'),
   ('dashboard.view',              'analytics',      'View owner dashboard, analytics, and reports'),
+  ('dashboard.view_own',          'analytics',      'View own revenue/consultation analytics - Doctor only, row-scoped'),
   ('audit.view',                  'security',       'View the tenant audit log'),
   ('branches.manage',             'tenancy',        'Create/edit branches');
 
@@ -1074,7 +1075,7 @@ SELECT r.id, p.id FROM roles r, permissions p WHERE (r.code, p.code) IN (
   ('DOCTOR','vitals.record'), ('DOCTOR','vitals.view'),
   ('DOCTOR','checkin.view'), ('DOCTOR','queue.view'),
   ('DOCTOR','consultation.manage'), ('DOCTOR','consultation.view'),
-  ('DOCTOR','prescription.manage'), ('DOCTOR','prescription.view'),
+  ('DOCTOR','prescription.manage'), ('DOCTOR','prescription.view'), ('DOCTOR','dashboard.view_own'),
   ('DOCTOR','lab.order'), ('DOCTOR','billing.view_own'),
 
   ('RECEPTIONIST','patients.register'), ('RECEPTIONIST','patients.view_demographics'),

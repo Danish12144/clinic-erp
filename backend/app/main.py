@@ -11,6 +11,7 @@ from app.modules.consultation.router import consultation_router, prescription_ro
 from app.modules.doctors.router import router as doctors_router
 from app.modules.letterhead.router import router as letterhead_router
 from app.modules.patients.router import router as patients_router
+from app.modules.reports.router import billing_summary_router, financial_report_router
 from app.modules.staff.router import router as staff_router
 from app.modules.tenancy.router import branch_router, clinic_router
 from app.modules.vitals.router import router as vitals_router
@@ -43,6 +44,8 @@ app.include_router(prescription_router)
 app.include_router(letterhead_router)
 app.include_router(billing_invoice_router)
 app.include_router(billing_payment_router)
+app.include_router(billing_summary_router)
+app.include_router(financial_report_router)
 
 
 @app.get("/health", tags=["health"])
