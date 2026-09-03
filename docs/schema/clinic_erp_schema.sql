@@ -1004,7 +1004,7 @@ INSERT INTO permissions (code, module, description) VALUES
 INSERT INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id FROM roles r, permissions p WHERE (r.code, p.code) IN (
   ('OWNER','clinic.manage_settings'), ('OWNER','staff.manage'), ('OWNER','patients.register'),
-  ('OWNER','patients.view_emr'), ('OWNER','appointments.manage'), ('OWNER','checkin.manage'),
+  ('OWNER','patients.view_emr'), ('OWNER','patients.view_demographics'), ('OWNER','appointments.manage'), ('OWNER','checkin.manage'),
   ('OWNER','queue.manage'), ('OWNER','vitals.record'), ('OWNER','billing.manage'),
   ('OWNER','payments.record'), ('OWNER','pharmacy.manage_catalog'), ('OWNER','pharmacy.dispense'),
   ('OWNER','lab.manage_catalog'), ('OWNER','lab.order'), ('OWNER','lab.enter_results'),
@@ -1025,9 +1025,9 @@ SELECT r.id, p.id FROM roles r, permissions p WHERE (r.code, p.code) IN (
 
   ('NURSE','patients.view_demographics'), ('NURSE','vitals.record'), ('NURSE','queue.manage'),
 
-  ('LAB_STAFF','lab.order'), ('LAB_STAFF','lab.enter_results'),
+  ('LAB_STAFF','lab.order'), ('LAB_STAFF','lab.enter_results'), ('LAB_STAFF','patients.view_demographics'),
 
-  ('PHARMACY_STAFF','pharmacy.manage_catalog'), ('PHARMACY_STAFF','pharmacy.dispense'),
+  ('PHARMACY_STAFF','pharmacy.manage_catalog'), ('PHARMACY_STAFF','pharmacy.dispense'), ('PHARMACY_STAFF','patients.view_demographics'),
 
   ('PATIENT','appointments.book_own'), ('PATIENT','billing.view_own')
 );

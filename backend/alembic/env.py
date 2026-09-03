@@ -13,6 +13,7 @@ from app.core.db import Base
 # models import here as it's built.
 from app.modules.tenancy import models as tenancy_models  # noqa: F401,E402
 from app.modules.auth import models as auth_models  # noqa: F401,E402
+from app.modules.patients import models as patients_models  # noqa: F401,E402
 
 config = context.config
 settings = get_settings()

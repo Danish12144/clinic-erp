@@ -21,7 +21,8 @@ This repo pivoted from a single-tenant demo scaffold to **Clinic ERP + CRM**, a 
 |---|---|
 | Auth (identity, RBAC, staff login, patient OTP login, sessions) | ✅ Done — `backend/app/modules/auth/`, migrations `0001`, `0002` |
 | Tenancy (clinic settings, branches) | ✅ Done — `backend/app/modules/tenancy/`, migration `0003`. Clinic *creation*/onboarding and `subscriptions` are explicitly out of scope — see the module's own doc note in `docs/DATABASE-SCHEMA.md` |
-| Everything else (patients, appointments, EMR, pharmacy, lab, billing, CRM, ...) | Not started |
+| Patient Management (registration, search, demographics) | ✅ Done — `backend/app/modules/patients/`, migration `0004`. Merge-duplicate-patients and portal-account linking are explicitly out of scope — see the module's own doc note in `docs/DATABASE-SCHEMA.md` |
+| Everything else (appointments, EMR, pharmacy, lab, billing, CRM, ...) | Not started |
 
 ## Commands
 
@@ -78,3 +79,5 @@ There is no linter configured yet.
 **Read-vs-write permission split isn't uniform across a module — check what the data actually is.** In Tenancy, branch reads are open to any authenticated staff (operational reference data everyone needs — scheduling, check-in) while clinic settings reads are Owner-only (`clinic.manage_settings`, administrative/config data). Don't assume "GET routes are always open" or "always permission-gated" when adding a new module's routes — decide per resource, the way `app/modules/tenancy/router.py` does, and say why in a comment.
 
 **Reusable test fixtures now live centrally in `tests/conftest.py`, not per-module.** `login_as(role_code=...)` and `owner_headers` (built on it) were added while testing Tenancy specifically so future modules' integration tests don't re-implement "create a staff user with role X, log in via the real endpoint, return auth headers" each time — use them instead of hand-rolling login boilerplate in a new module's tests.
+
+**Migration 0001's `role_permissions` seed data has had two rounds of gaps found and fixed by later modules' integration tests** (both in migration `0004`, both surfaced as unexpected 403s, not schema errors): Lab Staff/Pharmacy Staff missing `patients.view_demographics`, and Owner missing it despite having the broader `patients.view_emr`. **Treat a 403 you didn't expect in a new module's tests as a real signal to check the seed data against the PRD §3 matrix, not just a bug in the new module's router** — the matrix is the source of truth; migration 0001's seed is a first pass at it and has been wrong twice already. Fix gaps in the *current* module's migration (as `0004` did), never by editing an already-applied one.
