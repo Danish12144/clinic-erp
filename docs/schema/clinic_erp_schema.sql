@@ -95,9 +95,12 @@ CREATE TYPE queue_token_status    AS ENUM ('WAITING','CALLED','IN_PROGRESS','DON
 CREATE TYPE inventory_txn_type    AS ENUM ('RECEIVE','DISPENSE','SALE','ADJUST','EXPIRE_WRITE_OFF');
 CREATE TYPE lab_order_status      AS ENUM ('ORDERED','SAMPLE_COLLECTED','PROCESSING','COMPLETED','CANCELLED');
 CREATE TYPE lab_result_flag       AS ENUM ('NORMAL','LOW','HIGH','CRITICAL');
-CREATE TYPE invoice_status        AS ENUM ('UNPAID','PARTIALLY_PAID','PAID','VOID');
+-- DRAFT/ISSUED (not just UNPAID) and NET_BANKING were added while
+-- building the Billing module (migration 0014), by direct instruction —
+-- see docs/DATABASE-SCHEMA.md's changelog. ISSUED plays UNPAID's old role.
+CREATE TYPE invoice_status        AS ENUM ('DRAFT','ISSUED','PARTIALLY_PAID','PAID','VOID');
 CREATE TYPE invoice_line_source   AS ENUM ('CONSULTATION','PROCEDURE','PHARMACY','LAB','OTHER');
-CREATE TYPE payment_method        AS ENUM ('CASH','CARD','UPI','INSURANCE','OTHER');
+CREATE TYPE payment_method        AS ENUM ('CASH','CARD','UPI','NET_BANKING','INSURANCE','OTHER');
 CREATE TYPE lead_stage            AS ENUM ('NEW','CONTACTED','QUALIFIED','CONVERTED','LOST');
 CREATE TYPE follow_up_status      AS ENUM ('PENDING','DONE','CANCELLED');
 CREATE TYPE comm_channel          AS ENUM ('WHATSAPP','SMS','EMAIL','PUSH');
@@ -654,7 +657,7 @@ CREATE TABLE invoices (
   tax           numeric(12,2) NOT NULL DEFAULT 0,
   discount      numeric(12,2) NOT NULL DEFAULT 0,
   total         numeric(12,2) NOT NULL DEFAULT 0,
-  status        invoice_status NOT NULL DEFAULT 'UNPAID',   -- derived from payments; app must not set PAID directly
+  status        invoice_status NOT NULL DEFAULT 'DRAFT',    -- derived from payments once ISSUED; app must not set PAID directly
   voided_at     timestamptz,
   voided_reason text,
   created_at    timestamptz NOT NULL DEFAULT now(),
@@ -669,6 +672,10 @@ ALTER TABLE pharmacy_sales
 -- `source_type`/`source_id` is polymorphic (CONSULTATION | PROCEDURE |
 -- PHARMACY | LAB | OTHER) rather than an FK, since a line item can point
 -- at a consultation, a prescription_item's dispense, or a lab_order.
+-- `updated_at` was added while building Billing (migration 0014) — a
+-- DRAFT invoice's line items are edited in place (PATCH), not only
+-- deleted and recreated, matching this file's own architecture note about
+-- keeping that the simple common case.
 CREATE TABLE invoice_line_items (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   tenant_id   UUID NOT NULL REFERENCES clinics(id) ON DELETE CASCADE,
@@ -679,12 +686,15 @@ CREATE TABLE invoice_line_items (
   quantity    numeric(10,2) NOT NULL DEFAULT 1,
   unit_price  numeric(10,2) NOT NULL,
   total       numeric(12,2) NOT NULL,
-  created_at  timestamptz NOT NULL DEFAULT now()
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at  timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX ix_invoice_line_items_invoice ON invoice_line_items (invoice_id);
 
 -- Supports split/partial payment (multiple rows per invoice) and refunds
 -- (a row with negative amount + reason) — never mutates a prior payment.
+-- `notes` was added while building Billing (migration 0014): this
+-- comment always promised "+ reason" but the DDL had no column for it.
 CREATE TABLE payments (
   id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   tenant_id         UUID NOT NULL REFERENCES clinics(id) ON DELETE CASCADE,
@@ -692,6 +702,7 @@ CREATE TABLE payments (
   amount            numeric(12,2) NOT NULL,
   method            payment_method NOT NULL,
   gateway_reference text,
+  notes             text,
   recorded_by       UUID NOT NULL REFERENCES users(id),
   recorded_at       timestamptz NOT NULL DEFAULT now(),
   created_at        timestamptz NOT NULL DEFAULT now()
@@ -912,7 +923,7 @@ BEGIN
     'permission_overrides','users','doctor_profiles','staff_profiles','patients',
     'appointments','encounters','queue_tokens','consultations','medicines',
     'medicine_batches','pharmacy_sales','prescription_items','lab_test_catalog',
-    'lab_orders','lab_results','invoices','expenses','inventory_items','leads',
+    'lab_orders','lab_results','invoices','invoice_line_items','expenses','inventory_items','leads',
     'follow_ups','notification_templates','telemedicine_sessions','abha_links'
   ])
   LOOP

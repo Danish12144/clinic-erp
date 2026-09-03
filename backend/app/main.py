@@ -5,6 +5,7 @@ from app.core.config import get_settings
 from app.modules.appointments.router import router as appointments_router
 from app.modules.audit.router import router as audit_router
 from app.modules.auth.router import router as auth_router
+from app.modules.billing.router import invoice_router as billing_invoice_router, payment_router as billing_payment_router
 from app.modules.checkin.router import encounter_router, queue_router
 from app.modules.consultation.router import consultation_router, prescription_router
 from app.modules.doctors.router import router as doctors_router
@@ -40,6 +41,8 @@ app.include_router(vitals_router)
 app.include_router(consultation_router)
 app.include_router(prescription_router)
 app.include_router(letterhead_router)
+app.include_router(billing_invoice_router)
+app.include_router(billing_payment_router)
 
 
 @app.get("/health", tags=["health"])

@@ -77,3 +77,24 @@ def require_permission(permission_code: str):
         return current_user
 
     return _check
+
+
+def require_any_permission(*permission_codes: str):
+    """Like `require_permission`, but for a route two differently-scoped
+    roles both reach through different permission codes — e.g. Billing's
+    reads, where Owner/Receptionist hold `billing.manage` (full) and
+    Doctor/Patient hold `billing.view_own` (row-scoped, enforced by the
+    service layer, not here). First needed by the Billing module; earlier
+    modules' "view" permission was always a single code shared by every
+    role that could read at all.
+    """
+
+    async def _check(current_user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
+        if not any(code in current_user.permissions for code in permission_codes):
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                f"Missing required permission: one of {', '.join(permission_codes)}",
+            )
+        return current_user
+
+    return _check
