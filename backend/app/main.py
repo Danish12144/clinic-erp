@@ -10,6 +10,7 @@ from app.modules.doctors.router import router as doctors_router
 from app.modules.patients.router import router as patients_router
 from app.modules.staff.router import router as staff_router
 from app.modules.tenancy.router import branch_router, clinic_router
+from app.modules.vitals.router import router as vitals_router
 
 settings = get_settings()
 
@@ -33,6 +34,7 @@ app.include_router(audit_router)
 app.include_router(appointments_router)
 app.include_router(encounter_router)
 app.include_router(queue_router)
+app.include_router(vitals_router)
 
 
 @app.get("/health", tags=["health"])
