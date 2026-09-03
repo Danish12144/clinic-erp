@@ -300,3 +300,92 @@ async def test_owner_can_replace_branch_assignments(api_client: AsyncClient, own
     response = await api_client.put(f"/api/v1/doctors/{user_id}/branches", json={"branch_ids": [branch_b]}, headers=owner_headers)
     assert response.status_code == 200
     assert response.json()["branch_ids"] == [branch_b]
+
+
+# ---- Directory (read-only, for booking flows) ----------------------------------
+
+
+async def test_receptionist_can_list_the_doctor_directory(
+    api_client: AsyncClient, owner_headers: dict[str, str], test_clinic: Clinic, login_as
+) -> None:
+    created = await api_client.post(
+        "/api/v1/doctors",
+        json={"first_name": "Directory", "last_name": "Doc", "email": "directory.doc@test-clinic.example", "specialization": "ENT"},
+        headers=owner_headers,
+    )
+    token = created.json()["invite"]["debug_invite_token"]
+    await api_client.post(
+        "/api/v1/auth/accept-invite", json={"clinic_slug": test_clinic.slug, "token": token, "password": "password-123"}
+    )
+
+    headers, _ = await login_as(role_code="RECEPTIONIST")
+    response = await api_client.get("/api/v1/doctors/directory", headers=headers)
+    assert response.status_code == 200
+    entry = next(d for d in response.json()["items"] if d["first_name"] == "Directory")
+    assert entry["specialization"] == "ENT"
+    assert "email" not in entry
+    assert "registration_number" not in entry
+    assert "status" not in entry
+
+
+async def test_patient_can_list_the_doctor_directory(api_client: AsyncClient, login_as) -> None:
+    headers, _ = await login_as(role_code="PATIENT")
+    response = await api_client.get("/api/v1/doctors/directory", headers=headers)
+    assert response.status_code == 200
+
+
+async def test_doctor_cannot_list_the_directory(api_client: AsyncClient, login_as) -> None:
+    """Only Receptionist and Patient were granted `doctors.view_directory`
+    (migration 0008) — a Doctor manages their own profile via `/me`, not
+    this endpoint."""
+    headers, _ = await login_as(role_code="DOCTOR")
+    response = await api_client.get("/api/v1/doctors/directory", headers=headers)
+    assert response.status_code == 403
+
+
+async def test_directory_excludes_invited_and_deactivated_doctors(
+    api_client: AsyncClient, owner_headers: dict[str, str], test_clinic: Clinic, login_as
+) -> None:
+    still_invited = await api_client.post(
+        "/api/v1/doctors", json={"first_name": "StillInvited", "phone": "+919876500080"}, headers=owner_headers
+    )
+
+    deactivated = await api_client.post(
+        "/api/v1/doctors",
+        json={"first_name": "Deactivated", "email": "deactivated.doc@test-clinic.example"},
+        headers=owner_headers,
+    )
+    deactivated_user_id = deactivated.json()["doctor"]["user_id"]
+    token = deactivated.json()["invite"]["debug_invite_token"]
+    await api_client.post(
+        "/api/v1/auth/accept-invite", json={"clinic_slug": test_clinic.slug, "token": token, "password": "password-123"}
+    )
+    await api_client.post(f"/api/v1/doctors/{deactivated_user_id}/deactivate", headers=owner_headers)
+
+    headers, _ = await login_as(role_code="RECEPTIONIST")
+    response = await api_client.get("/api/v1/doctors/directory", headers=headers)
+    names = {d["first_name"] for d in response.json()["items"]}
+    assert "StillInvited" not in names
+    assert "Deactivated" not in names
+
+
+async def test_directory_filters_by_branch(api_client: AsyncClient, owner_headers: dict[str, str], test_clinic: Clinic, login_as) -> None:
+    branch_a = await _create_branch(api_client, owner_headers, "Directory Branch A")
+    branch_b = await _create_branch(api_client, owner_headers, "Directory Branch B")
+
+    in_branch_a = await api_client.post(
+        "/api/v1/doctors",
+        json={"first_name": "InBranchA", "email": "inbrancha.doc@test-clinic.example", "branch_ids": [branch_a]},
+        headers=owner_headers,
+    )
+    token = in_branch_a.json()["invite"]["debug_invite_token"]
+    await api_client.post(
+        "/api/v1/auth/accept-invite", json={"clinic_slug": test_clinic.slug, "token": token, "password": "password-123"}
+    )
+
+    headers, _ = await login_as(role_code="RECEPTIONIST")
+    in_a = await api_client.get(f"/api/v1/doctors/directory?branch_id={branch_a}", headers=headers)
+    in_b = await api_client.get(f"/api/v1/doctors/directory?branch_id={branch_b}", headers=headers)
+
+    assert any(d["first_name"] == "InBranchA" for d in in_a.json()["items"])
+    assert all(d["first_name"] != "InBranchA" for d in in_b.json()["items"])

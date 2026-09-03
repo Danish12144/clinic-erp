@@ -8,9 +8,16 @@ everyone else –), listing/creating/managing any doctor is Owner-only
 this module issues happens at `POST /api/v1/auth/accept-invite` (Auth
 module) — role-agnostic, so it isn't duplicated here.
 
-The static `/me` route is declared before the `/{user_id}` routes so
-FastAPI matches it first — `user_id` is typed as a UUID path param and
-would 422 on "me" if a param route were matched first.
+`GET /directory` is a deliberate, later addition on top of that matrix —
+migration 0008 grants a new `doctors.view_directory` permission to
+Receptionist and Patient specifically so booking flows can list bookable
+doctors, without reopening the Owner-only management view above or its
+PII-bearing `DoctorSummary` response shape (see `DoctorDirectoryEntry`).
+
+The static routes (`/directory`, `/me`) are declared before the
+`/{user_id}` routes so FastAPI matches them first — `user_id` is typed as
+a UUID path param and would 422 on them if a param route were matched
+first.
 """
 
 import uuid
@@ -23,6 +30,7 @@ from app.modules.doctors.schemas import (
     BranchAssignmentRequest,
     DoctorCreateRequest,
     DoctorCreateResponse,
+    DoctorDirectoryResponse,
     DoctorListResponse,
     DoctorSummary,
     DoctorUpdateRequest,
@@ -42,7 +50,9 @@ async def create_doctor(
     current_user: CurrentUser = Depends(require_permission("staff.manage")),
     service: DoctorService = Depends(get_doctor_service),
 ) -> DoctorCreateResponse:
-    return await service.create_doctor(tenant_id=current_user.tenant_id, payload=payload)
+    return await service.create_doctor(
+        tenant_id=current_user.tenant_id, payload=payload, actor_user_id=current_user.user_id, actor_role=current_user.role_code
+    )
 
 
 @router.get("", response_model=DoctorListResponse)
@@ -65,6 +75,30 @@ async def search_doctors(
     )
 
 
+@router.get("/directory", response_model=DoctorDirectoryResponse)
+async def list_doctor_directory(
+    q: str | None = Query(None, description="Fuzzy match against doctor name"),
+    specialization: str | None = Query(None),
+    branch_id: uuid.UUID | None = Query(None),
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    current_user: CurrentUser = Depends(require_permission("doctors.view_directory")),
+    service: DoctorService = Depends(get_doctor_service),
+) -> DoctorDirectoryResponse:
+    """Read-only, public-safe doctor listing for booking flows — Receptionist
+    and Patient (migration 0008's `doctors.view_directory`), distinct from
+    the Owner-only `GET ""` management view above. Only ACTIVE doctors are
+    ever returned; see DoctorRepository.search_directory."""
+    return await service.list_directory(
+        tenant_id=current_user.tenant_id,
+        query_text=q,
+        specialization=specialization,
+        branch_id=branch_id,
+        limit=limit,
+        offset=offset,
+    )
+
+
 @router.get("/me", response_model=DoctorSummary)
 async def get_my_profile(
     current_user: CurrentUser = Depends(get_current_user), service: DoctorService = Depends(get_doctor_service)
@@ -78,7 +112,13 @@ async def update_my_profile(
     current_user: CurrentUser = Depends(require_permission("doctor.manage_own_profile")),
     service: DoctorService = Depends(get_doctor_service),
 ) -> DoctorSummary:
-    return await service.update_my_profile(tenant_id=current_user.tenant_id, user_id=current_user.user_id, payload=payload)
+    return await service.update_my_profile(
+        tenant_id=current_user.tenant_id,
+        user_id=current_user.user_id,
+        payload=payload,
+        actor_user_id=current_user.user_id,
+        actor_role=current_user.role_code,
+    )
 
 
 @router.get("/{user_id}", response_model=DoctorSummary)
@@ -97,7 +137,13 @@ async def update_doctor(
     current_user: CurrentUser = Depends(require_permission("staff.manage")),
     service: DoctorService = Depends(get_doctor_service),
 ) -> DoctorSummary:
-    return await service.update_doctor(tenant_id=current_user.tenant_id, user_id=user_id, payload=payload)
+    return await service.update_doctor(
+        tenant_id=current_user.tenant_id,
+        user_id=user_id,
+        payload=payload,
+        actor_user_id=current_user.user_id,
+        actor_role=current_user.role_code,
+    )
 
 
 @router.post("/{user_id}/deactivate", response_model=DoctorSummary)
@@ -106,7 +152,9 @@ async def deactivate_doctor(
     current_user: CurrentUser = Depends(require_permission("staff.manage")),
     service: DoctorService = Depends(get_doctor_service),
 ) -> DoctorSummary:
-    return await service.deactivate_doctor(tenant_id=current_user.tenant_id, user_id=user_id)
+    return await service.deactivate_doctor(
+        tenant_id=current_user.tenant_id, user_id=user_id, actor_user_id=current_user.user_id, actor_role=current_user.role_code
+    )
 
 
 @router.post("/{user_id}/reactivate", response_model=DoctorSummary)
@@ -115,7 +163,9 @@ async def reactivate_doctor(
     current_user: CurrentUser = Depends(require_permission("staff.manage")),
     service: DoctorService = Depends(get_doctor_service),
 ) -> DoctorSummary:
-    return await service.reactivate_doctor(tenant_id=current_user.tenant_id, user_id=user_id)
+    return await service.reactivate_doctor(
+        tenant_id=current_user.tenant_id, user_id=user_id, actor_user_id=current_user.user_id, actor_role=current_user.role_code
+    )
 
 
 @router.put("/{user_id}/branches", response_model=DoctorSummary)
@@ -125,7 +175,13 @@ async def set_doctor_branches(
     current_user: CurrentUser = Depends(require_permission("staff.manage")),
     service: DoctorService = Depends(get_doctor_service),
 ) -> DoctorSummary:
-    return await service.set_branches(tenant_id=current_user.tenant_id, user_id=user_id, branch_ids=payload.branch_ids)
+    return await service.set_branches(
+        tenant_id=current_user.tenant_id,
+        user_id=user_id,
+        branch_ids=payload.branch_ids,
+        actor_user_id=current_user.user_id,
+        actor_role=current_user.role_code,
+    )
 
 
 @router.post("/{user_id}/invite/resend", response_model=InviteInfo)

@@ -118,6 +118,45 @@ class DoctorRepository:
         page_result = await self._session.execute(page_query.limit(limit).offset(offset))
         return [(row.User, row.DoctorProfile) for row in page_result.all()], total
 
+    async def search_directory(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        query_text: str | None,
+        specialization: str | None,
+        branch_id: uuid.UUID | None,
+        limit: int,
+        offset: int,
+    ) -> tuple[list[tuple[User, DoctorProfile]], int]:
+        """Public-facing directory for booking flows (Receptionist,
+        Patient — `doctors.view_directory`, migration 0008): only ACTIVE
+        doctors. Deliberately distinct from `search` (the Owner-only
+        management view, which shows every status including INVITED/
+        INACTIVE) — a directory entry for a doctor still mid-onboarding or
+        deactivated would let a patient try to book someone unbookable."""
+        filters = [User.tenant_id == tenant_id, DoctorProfile.user_id == User.id, User.status == UserStatus.ACTIVE]
+        if specialization:
+            filters.append(func.lower(DoctorProfile.specialization) == specialization.lower())
+        if branch_id:
+            filters.append(
+                User.id.in_(select(UserBranchAssignment.user_id).where(UserBranchAssignment.branch_id == branch_id))
+            )
+        name_expr = func.concat(User.first_name, " ", func.coalesce(User.last_name, ""))
+        if query_text:
+            filters.append(func.similarity(name_expr, query_text) > 0.2)
+
+        count_result = await self._session.execute(
+            select(func.count()).select_from(User).join(DoctorProfile, DoctorProfile.user_id == User.id).where(*filters)
+        )
+        total = count_result.scalar_one()
+
+        page_query = select(User, DoctorProfile).join(DoctorProfile, DoctorProfile.user_id == User.id).where(*filters)
+        page_query = (
+            page_query.order_by(func.similarity(name_expr, query_text).desc()) if query_text else page_query.order_by(name_expr)
+        )
+        page_result = await self._session.execute(page_query.limit(limit).offset(offset))
+        return [(row.User, row.DoctorProfile) for row in page_result.all()], total
+
 
 class BranchAssignmentRepository:
     """Generic to any staff role, not doctor-specific — Staff Management

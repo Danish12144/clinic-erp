@@ -100,3 +100,28 @@ class BranchAssignmentRequest(BaseModel):
 class DoctorCreateResponse(BaseModel):
     doctor: DoctorSummary
     invite: InviteInfo
+
+
+class DoctorDirectoryEntry(BaseModel):
+    """The public-facing subset of a doctor's data — deliberately NOT
+    `DoctorSummary`: no `email`/`phone`/`registration_number`/`status`.
+    Used by `GET /api/v1/doctors/directory` (Receptionist/Patient, for
+    booking flows), which only lists ACTIVE doctors in the first place —
+    see DoctorRepository.search_directory."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    user_id: uuid.UUID
+    first_name: str | None
+    last_name: str | None
+    specialization: str | None
+    consultation_fee: Decimal | None
+    working_hours: dict
+    branch_ids: list[uuid.UUID]
+
+
+class DoctorDirectoryResponse(BaseModel):
+    items: list[DoctorDirectoryEntry]
+    total: int
+    limit: int
+    offset: int

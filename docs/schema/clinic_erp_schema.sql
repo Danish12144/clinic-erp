@@ -62,9 +62,18 @@ $$ LANGUAGE plpgsql;
 
 -- Applied to vitals, prescriptions, and audit_logs: makes the "no
 -- overwrite, preserve history" requirement a database guarantee, not just
--- an application convention.
+-- an application convention. The app_is_platform_admin() escape valve
+-- (added post-implementation, see DATABASE-SCHEMA.md changelog) exists
+-- because these tables also cascade ON DELETE from clinics — normal
+-- application code (tenant_session, is_platform_admin=false) is still
+-- unconditionally blocked; only the same narrow administrative bypass
+-- already used for RLS can also remove these rows, e.g. as a side effect
+-- of deleting the tenant that owns them entirely.
 CREATE OR REPLACE FUNCTION prevent_update_delete() RETURNS trigger AS $$
 BEGIN
+  IF app_is_platform_admin() THEN
+    RETURN COALESCE(NEW, OLD);
+  END IF;
   RAISE EXCEPTION 'rows in % are append-only and cannot be % (attempted on id=%)',
     TG_TABLE_NAME, TG_OP, COALESCE(OLD.id::text, 'unknown');
   RETURN NULL;

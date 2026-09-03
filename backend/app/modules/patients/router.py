@@ -37,7 +37,9 @@ async def create_patient(
     current_user: CurrentUser = Depends(require_permission("patients.register")),
     service: PatientService = Depends(get_patient_service),
 ) -> PatientCreateResponse:
-    return await service.create_patient(tenant_id=current_user.tenant_id, payload=payload)
+    return await service.create_patient(
+        tenant_id=current_user.tenant_id, payload=payload, actor_user_id=current_user.user_id, actor_role=current_user.role_code
+    )
 
 
 @router.get("", response_model=PatientListResponse)
@@ -85,7 +87,13 @@ async def update_patient(
     current_user: CurrentUser = Depends(require_permission("patients.register")),
     service: PatientService = Depends(get_patient_service),
 ) -> PatientSummary:
-    return await service.update_patient(tenant_id=current_user.tenant_id, patient_id=patient_id, payload=payload)
+    return await service.update_patient(
+        tenant_id=current_user.tenant_id,
+        patient_id=patient_id,
+        payload=payload,
+        actor_user_id=current_user.user_id,
+        actor_role=current_user.role_code,
+    )
 
 
 @router.delete("/{patient_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -94,4 +102,6 @@ async def delete_patient(
     current_user: CurrentUser = Depends(require_permission("patients.register")),
     service: PatientService = Depends(get_patient_service),
 ) -> None:
-    await service.delete_patient(tenant_id=current_user.tenant_id, patient_id=patient_id)
+    await service.delete_patient(
+        tenant_id=current_user.tenant_id, patient_id=patient_id, actor_user_id=current_user.user_id, actor_role=current_user.role_code
+    )

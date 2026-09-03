@@ -17,6 +17,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.exc import IntegrityError
 
 from app.core.db import tenant_session
+from app.modules.audit.service import record as record_audit
 from app.modules.auth.models import UserStatus
 from app.modules.auth.schemas import InviteInfo
 from app.modules.auth.service import issue_staff_invite
@@ -25,6 +26,8 @@ from app.modules.doctors.repository import BranchAssignmentRepository, DoctorRep
 from app.modules.doctors.schemas import (
     DoctorCreateRequest,
     DoctorCreateResponse,
+    DoctorDirectoryEntry,
+    DoctorDirectoryResponse,
     DoctorListResponse,
     DoctorSummary,
     DoctorUpdateRequest,
@@ -59,7 +62,9 @@ class DoctorService:
             if await branch_repo.get_by_id(branch_id) is None:
                 raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"Branch '{branch_id}' does not exist")
 
-    async def create_doctor(self, *, tenant_id: uuid.UUID, payload: DoctorCreateRequest) -> DoctorCreateResponse:
+    async def create_doctor(
+        self, *, tenant_id: uuid.UUID, payload: DoctorCreateRequest, actor_user_id: uuid.UUID, actor_role: str
+    ) -> DoctorCreateResponse:
         async with tenant_session(tenant_id) as session:
             repo = DoctorRepository(session)
             await self._validate_branch_ids(session, payload.branch_ids)
@@ -95,7 +100,19 @@ class DoctorService:
                 )
 
             invite = await issue_staff_invite(session, tenant_id=tenant_id, user_id=user.id)
-            return DoctorCreateResponse(doctor=_to_summary(user, profile, payload.branch_ids), invite=invite)
+            summary = _to_summary(user, profile, payload.branch_ids)
+            await record_audit(
+                session,
+                tenant_id=tenant_id,
+                actor_user_id=actor_user_id,
+                actor_role=actor_role,
+                action="doctor.create",
+                entity_type="doctor",
+                entity_id=user.id,
+                before=None,
+                after=summary.model_dump(mode="json"),
+            )
+            return DoctorCreateResponse(doctor=summary, invite=invite)
 
     async def resend_invite(self, *, tenant_id: uuid.UUID, user_id: uuid.UUID) -> InviteInfo:
         async with tenant_session(tenant_id) as session:
@@ -135,6 +152,43 @@ class DoctorService:
                 items.append(_to_summary(user, profile, branch_ids))
             return DoctorListResponse(items=items, total=total, limit=limit, offset=offset)
 
+    async def list_directory(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        query_text: str | None,
+        specialization: str | None,
+        branch_id: uuid.UUID | None,
+        limit: int,
+        offset: int,
+    ) -> DoctorDirectoryResponse:
+        async with tenant_session(tenant_id) as session:
+            repo = DoctorRepository(session)
+            branch_repo = BranchAssignmentRepository(session)
+            rows, total = await repo.search_directory(
+                tenant_id=tenant_id,
+                query_text=query_text,
+                specialization=specialization,
+                branch_id=branch_id,
+                limit=limit,
+                offset=offset,
+            )
+            items = []
+            for user, profile in rows:
+                branch_ids = await branch_repo.get_branch_ids(user.id)
+                items.append(
+                    DoctorDirectoryEntry(
+                        user_id=user.id,
+                        first_name=user.first_name,
+                        last_name=user.last_name,
+                        specialization=profile.specialization,
+                        consultation_fee=profile.consultation_fee,
+                        working_hours=profile.working_hours,
+                        branch_ids=branch_ids,
+                    )
+                )
+            return DoctorDirectoryResponse(items=items, total=total, limit=limit, offset=offset)
+
     async def get_doctor(self, *, tenant_id: uuid.UUID, user_id: uuid.UUID) -> DoctorSummary:
         async with tenant_session(tenant_id) as session:
             repo = DoctorRepository(session)
@@ -148,7 +202,16 @@ class DoctorService:
     async def get_my_profile(self, *, tenant_id: uuid.UUID, user_id: uuid.UUID) -> DoctorSummary:
         return await self.get_doctor(tenant_id=tenant_id, user_id=user_id)
 
-    async def _apply_update(self, *, tenant_id: uuid.UUID, user_id: uuid.UUID, payload: DoctorUpdateRequest) -> DoctorSummary:
+    async def _apply_update(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        user_id: uuid.UUID,
+        payload: DoctorUpdateRequest,
+        actor_user_id: uuid.UUID,
+        actor_role: str,
+        action: str,
+    ) -> DoctorSummary:
         changes = payload.model_dump(exclude_unset=True, exclude={"first_name", "last_name", "working_hours"})
         if "working_hours" in payload.model_fields_set:
             changes["working_hours"] = payload.working_hours.model_dump(exclude_none=True) if payload.working_hours else {}
@@ -163,47 +226,105 @@ class DoctorService:
             found = await repo.get_user_and_profile(user_id)
             if found is None:
                 raise HTTPException(status.HTTP_404_NOT_FOUND, "Doctor not found")
+            branch_ids = await BranchAssignmentRepository(session).get_branch_ids(user_id)
+            before = _to_summary(found[0], found[1], branch_ids)
             await repo.update_profile(user_id, **changes)
             await repo.update_user(user_id, **user_changes)
             updated = await repo.get_user_and_profile(user_id)
             assert updated is not None
-            branch_ids = await BranchAssignmentRepository(session).get_branch_ids(user_id)
-            return _to_summary(updated[0], updated[1], branch_ids)
+            after = _to_summary(updated[0], updated[1], branch_ids)
+            await record_audit(
+                session,
+                tenant_id=tenant_id,
+                actor_user_id=actor_user_id,
+                actor_role=actor_role,
+                action=action,
+                entity_type="doctor",
+                entity_id=user_id,
+                before=before.model_dump(mode="json"),
+                after=after.model_dump(mode="json"),
+            )
+            return after
 
-    async def update_doctor(self, *, tenant_id: uuid.UUID, user_id: uuid.UUID, payload: DoctorUpdateRequest) -> DoctorSummary:
-        return await self._apply_update(tenant_id=tenant_id, user_id=user_id, payload=payload)
+    async def update_doctor(
+        self, *, tenant_id: uuid.UUID, user_id: uuid.UUID, payload: DoctorUpdateRequest, actor_user_id: uuid.UUID, actor_role: str
+    ) -> DoctorSummary:
+        return await self._apply_update(
+            tenant_id=tenant_id, user_id=user_id, payload=payload, actor_user_id=actor_user_id, actor_role=actor_role,
+            action="doctor.update",
+        )
 
-    async def update_my_profile(self, *, tenant_id: uuid.UUID, user_id: uuid.UUID, payload: DoctorUpdateRequest) -> DoctorSummary:
-        return await self._apply_update(tenant_id=tenant_id, user_id=user_id, payload=payload)
+    async def update_my_profile(
+        self, *, tenant_id: uuid.UUID, user_id: uuid.UUID, payload: DoctorUpdateRequest, actor_user_id: uuid.UUID, actor_role: str
+    ) -> DoctorSummary:
+        return await self._apply_update(
+            tenant_id=tenant_id, user_id=user_id, payload=payload, actor_user_id=actor_user_id, actor_role=actor_role,
+            action="doctor.update_own_profile",
+        )
 
-    async def _set_status(self, *, tenant_id: uuid.UUID, user_id: uuid.UUID, new_status: UserStatus) -> DoctorSummary:
+    async def _set_status(
+        self, *, tenant_id: uuid.UUID, user_id: uuid.UUID, new_status: UserStatus, actor_user_id: uuid.UUID, actor_role: str
+    ) -> DoctorSummary:
         async with tenant_session(tenant_id) as session:
             repo = DoctorRepository(session)
             found = await repo.get_user_and_profile(user_id)
             if found is None:
                 raise HTTPException(status.HTTP_404_NOT_FOUND, "Doctor not found")
+            previous_status = found[0].status.value
             await repo.update_user(user_id, status=new_status)
             updated = await repo.get_user_and_profile(user_id)
             assert updated is not None
             branch_ids = await BranchAssignmentRepository(session).get_branch_ids(user_id)
+            await record_audit(
+                session,
+                tenant_id=tenant_id,
+                actor_user_id=actor_user_id,
+                actor_role=actor_role,
+                action="doctor.deactivate" if new_status == UserStatus.INACTIVE else "doctor.reactivate",
+                entity_type="doctor",
+                entity_id=user_id,
+                before={"status": previous_status},
+                after={"status": new_status.value},
+            )
             return _to_summary(updated[0], updated[1], branch_ids)
 
-    async def deactivate_doctor(self, *, tenant_id: uuid.UUID, user_id: uuid.UUID) -> DoctorSummary:
-        return await self._set_status(tenant_id=tenant_id, user_id=user_id, new_status=UserStatus.INACTIVE)
+    async def deactivate_doctor(
+        self, *, tenant_id: uuid.UUID, user_id: uuid.UUID, actor_user_id: uuid.UUID, actor_role: str
+    ) -> DoctorSummary:
+        return await self._set_status(
+            tenant_id=tenant_id, user_id=user_id, new_status=UserStatus.INACTIVE, actor_user_id=actor_user_id, actor_role=actor_role
+        )
 
-    async def reactivate_doctor(self, *, tenant_id: uuid.UUID, user_id: uuid.UUID) -> DoctorSummary:
-        return await self._set_status(tenant_id=tenant_id, user_id=user_id, new_status=UserStatus.ACTIVE)
+    async def reactivate_doctor(
+        self, *, tenant_id: uuid.UUID, user_id: uuid.UUID, actor_user_id: uuid.UUID, actor_role: str
+    ) -> DoctorSummary:
+        return await self._set_status(
+            tenant_id=tenant_id, user_id=user_id, new_status=UserStatus.ACTIVE, actor_user_id=actor_user_id, actor_role=actor_role
+        )
 
-    async def set_branches(self, *, tenant_id: uuid.UUID, user_id: uuid.UUID, branch_ids: list[uuid.UUID]) -> DoctorSummary:
+    async def set_branches(
+        self, *, tenant_id: uuid.UUID, user_id: uuid.UUID, branch_ids: list[uuid.UUID], actor_user_id: uuid.UUID, actor_role: str
+    ) -> DoctorSummary:
         async with tenant_session(tenant_id) as session:
             repo = DoctorRepository(session)
             found = await repo.get_user_and_profile(user_id)
             if found is None:
                 raise HTTPException(status.HTTP_404_NOT_FOUND, "Doctor not found")
             await self._validate_branch_ids(session, branch_ids)
-            await BranchAssignmentRepository(session).set_branch_assignments(
-                tenant_id=tenant_id, user_id=user_id, branch_ids=branch_ids
-            )
+            branch_repo = BranchAssignmentRepository(session)
+            previous_branch_ids = await branch_repo.get_branch_ids(user_id)
+            await branch_repo.set_branch_assignments(tenant_id=tenant_id, user_id=user_id, branch_ids=branch_ids)
             updated = await repo.get_user_and_profile(user_id)
             assert updated is not None
+            await record_audit(
+                session,
+                tenant_id=tenant_id,
+                actor_user_id=actor_user_id,
+                actor_role=actor_role,
+                action="doctor.branches.update",
+                entity_type="doctor",
+                entity_id=user_id,
+                before={"branch_ids": [str(b) for b in previous_branch_ids]},
+                after={"branch_ids": [str(b) for b in branch_ids]},
+            )
             return _to_summary(updated[0], updated[1], branch_ids)

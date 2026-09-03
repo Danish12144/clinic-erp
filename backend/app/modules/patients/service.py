@@ -18,6 +18,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.exc import IntegrityError
 
 from app.core.db import tenant_session
+from app.modules.audit.service import record as record_audit
 from app.modules.patients.repository import PatientRepository
 from app.modules.patients.schemas import (
     PatientCreateRequest,
@@ -31,7 +32,14 @@ _MAX_MRN_GENERATION_ATTEMPTS = 5
 
 
 class PatientService:
-    async def create_patient(self, *, tenant_id: uuid.UUID, payload: PatientCreateRequest) -> PatientCreateResponse:
+    async def create_patient(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        payload: PatientCreateRequest,
+        actor_user_id: uuid.UUID,
+        actor_role: str,
+    ) -> PatientCreateResponse:
         async with tenant_session(tenant_id) as session:
             duplicates = await PatientRepository(session).find_possible_duplicates(
                 tenant_id=tenant_id,
@@ -58,9 +66,19 @@ class PatientService:
                             status.HTTP_409_CONFLICT, f"A patient with MRN '{explicit_mrn}' already exists"
                         ) from exc
                     continue  # auto-generated candidate collided; loop retries with a fresh count-based candidate
-                return PatientCreateResponse(
-                    patient=PatientSummary.model_validate(patient), possible_duplicates=duplicate_summaries
+                summary = PatientSummary.model_validate(patient)
+                await record_audit(
+                    session,
+                    tenant_id=tenant_id,
+                    actor_user_id=actor_user_id,
+                    actor_role=actor_role,
+                    action="patient.create",
+                    entity_type="patient",
+                    entity_id=patient.id,
+                    before=None,
+                    after=summary.model_dump(mode="json"),
                 )
+                return PatientCreateResponse(patient=summary, possible_duplicates=duplicate_summaries)
 
         raise HTTPException(
             status.HTTP_409_CONFLICT, "Could not generate a unique medical record number — please retry"
@@ -106,7 +124,13 @@ class PatientService:
             return PatientSummary.model_validate(patient)
 
     async def update_patient(
-        self, *, tenant_id: uuid.UUID, patient_id: uuid.UUID, payload: PatientUpdateRequest
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        patient_id: uuid.UUID,
+        payload: PatientUpdateRequest,
+        actor_user_id: uuid.UUID,
+        actor_role: str,
     ) -> PatientSummary:
         changes = payload.model_dump(exclude_unset=True)
         async with tenant_session(tenant_id) as session:
@@ -114,14 +138,41 @@ class PatientService:
             patient = await repo.get_by_id(patient_id)
             if patient is None:
                 raise HTTPException(status.HTTP_404_NOT_FOUND, "Patient not found")
+            before = PatientSummary.model_validate(patient).model_dump(mode="json")
             await repo.update(patient_id, **changes)
             updated = await repo.get_by_id(patient_id)
-            return PatientSummary.model_validate(updated)
+            after = PatientSummary.model_validate(updated)
+            await record_audit(
+                session,
+                tenant_id=tenant_id,
+                actor_user_id=actor_user_id,
+                actor_role=actor_role,
+                action="patient.update",
+                entity_type="patient",
+                entity_id=patient_id,
+                before=before,
+                after=after.model_dump(mode="json"),
+            )
+            return after
 
-    async def delete_patient(self, *, tenant_id: uuid.UUID, patient_id: uuid.UUID) -> None:
+    async def delete_patient(
+        self, *, tenant_id: uuid.UUID, patient_id: uuid.UUID, actor_user_id: uuid.UUID, actor_role: str
+    ) -> None:
         async with tenant_session(tenant_id) as session:
             repo = PatientRepository(session)
             patient = await repo.get_by_id(patient_id)
             if patient is None:
                 raise HTTPException(status.HTTP_404_NOT_FOUND, "Patient not found")
+            before = PatientSummary.model_validate(patient).model_dump(mode="json")
             await repo.soft_delete(patient_id)
+            await record_audit(
+                session,
+                tenant_id=tenant_id,
+                actor_user_id=actor_user_id,
+                actor_role=actor_role,
+                action="patient.soft_delete",
+                entity_type="patient",
+                entity_id=patient_id,
+                before=before,
+                after=None,
+            )

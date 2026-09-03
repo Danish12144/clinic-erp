@@ -18,6 +18,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.exc import IntegrityError
 
 from app.core.db import tenant_session
+from app.modules.audit.service import record as record_audit
 from app.modules.auth.models import UserStatus
 from app.modules.auth.schemas import InviteInfo
 from app.modules.auth.service import issue_staff_invite
@@ -54,7 +55,9 @@ class StaffService:
             if await branch_repo.get_by_id(branch_id) is None:
                 raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"Branch '{branch_id}' does not exist")
 
-    async def create_staff(self, *, tenant_id: uuid.UUID, payload: StaffCreateRequest) -> StaffCreateResponse:
+    async def create_staff(
+        self, *, tenant_id: uuid.UUID, payload: StaffCreateRequest, actor_user_id: uuid.UUID, actor_role: str
+    ) -> StaffCreateResponse:
         async with tenant_session(tenant_id) as session:
             repo = StaffRepository(session)
             await self._validate_branch_ids(session, payload.branch_ids)
@@ -91,25 +94,34 @@ class StaffService:
             # user.role isn't populated on a just-constructed instance the
             # way a fresh SELECT's joined-load would — payload.role_code is
             # already the validated, authoritative value for this response.
-            return StaffCreateResponse(
-                staff=StaffSummary(
-                    user_id=user.id,
-                    tenant_id=user.tenant_id,
-                    role_code=payload.role_code,
-                    first_name=user.first_name,
-                    last_name=user.last_name,
-                    email=user.email,
-                    phone=user.phone,
-                    status=user.status.value,
-                    employee_code=profile.employee_code,
-                    designation=profile.designation,
-                    joining_date=profile.joining_date,
-                    branch_ids=payload.branch_ids,
-                    created_at=profile.created_at,
-                    updated_at=profile.updated_at,
-                ),
-                invite=invite,
+            summary = StaffSummary(
+                user_id=user.id,
+                tenant_id=user.tenant_id,
+                role_code=payload.role_code,
+                first_name=user.first_name,
+                last_name=user.last_name,
+                email=user.email,
+                phone=user.phone,
+                status=user.status.value,
+                employee_code=profile.employee_code,
+                designation=profile.designation,
+                joining_date=profile.joining_date,
+                branch_ids=payload.branch_ids,
+                created_at=profile.created_at,
+                updated_at=profile.updated_at,
             )
+            await record_audit(
+                session,
+                tenant_id=tenant_id,
+                actor_user_id=actor_user_id,
+                actor_role=actor_role,
+                action="staff.create",
+                entity_type="staff",
+                entity_id=user.id,
+                before=None,
+                after=summary.model_dump(mode="json"),
+            )
+            return StaffCreateResponse(staff=summary, invite=invite)
 
     async def resend_invite(self, *, tenant_id: uuid.UUID, user_id: uuid.UUID) -> InviteInfo:
         async with tenant_session(tenant_id) as session:
@@ -159,7 +171,9 @@ class StaffService:
             branch_ids = await BranchAssignmentRepository(session).get_branch_ids(user_id)
             return _to_summary(user, profile, branch_ids)
 
-    async def update_staff(self, *, tenant_id: uuid.UUID, user_id: uuid.UUID, payload: StaffUpdateRequest) -> StaffSummary:
+    async def update_staff(
+        self, *, tenant_id: uuid.UUID, user_id: uuid.UUID, payload: StaffUpdateRequest, actor_user_id: uuid.UUID, actor_role: str
+    ) -> StaffSummary:
         changes = payload.model_dump(exclude_unset=True, exclude={"first_name", "last_name"})
         user_changes = {}
         for field in ("first_name", "last_name"):
@@ -171,41 +185,89 @@ class StaffService:
             found = await repo.get_user_and_profile(user_id)
             if found is None:
                 raise HTTPException(status.HTTP_404_NOT_FOUND, "Staff member not found")
+            branch_ids = await BranchAssignmentRepository(session).get_branch_ids(user_id)
+            before = _to_summary(found[0], found[1], branch_ids)
             await repo.update_profile(user_id, **changes)
             await repo.update_user(user_id, **user_changes)
             updated = await repo.get_user_and_profile(user_id)
             assert updated is not None
-            branch_ids = await BranchAssignmentRepository(session).get_branch_ids(user_id)
-            return _to_summary(updated[0], updated[1], branch_ids)
+            after = _to_summary(updated[0], updated[1], branch_ids)
+            await record_audit(
+                session,
+                tenant_id=tenant_id,
+                actor_user_id=actor_user_id,
+                actor_role=actor_role,
+                action="staff.update",
+                entity_type="staff",
+                entity_id=user_id,
+                before=before.model_dump(mode="json"),
+                after=after.model_dump(mode="json"),
+            )
+            return after
 
-    async def _set_status(self, *, tenant_id: uuid.UUID, user_id: uuid.UUID, new_status: UserStatus) -> StaffSummary:
+    async def _set_status(
+        self, *, tenant_id: uuid.UUID, user_id: uuid.UUID, new_status: UserStatus, actor_user_id: uuid.UUID, actor_role: str
+    ) -> StaffSummary:
         async with tenant_session(tenant_id) as session:
             repo = StaffRepository(session)
             found = await repo.get_user_and_profile(user_id)
             if found is None:
                 raise HTTPException(status.HTTP_404_NOT_FOUND, "Staff member not found")
+            previous_status = found[0].status.value
             await repo.update_user(user_id, status=new_status)
             updated = await repo.get_user_and_profile(user_id)
             assert updated is not None
             branch_ids = await BranchAssignmentRepository(session).get_branch_ids(user_id)
+            await record_audit(
+                session,
+                tenant_id=tenant_id,
+                actor_user_id=actor_user_id,
+                actor_role=actor_role,
+                action="staff.deactivate" if new_status == UserStatus.INACTIVE else "staff.reactivate",
+                entity_type="staff",
+                entity_id=user_id,
+                before={"status": previous_status},
+                after={"status": new_status.value},
+            )
             return _to_summary(updated[0], updated[1], branch_ids)
 
-    async def deactivate_staff(self, *, tenant_id: uuid.UUID, user_id: uuid.UUID) -> StaffSummary:
-        return await self._set_status(tenant_id=tenant_id, user_id=user_id, new_status=UserStatus.INACTIVE)
+    async def deactivate_staff(
+        self, *, tenant_id: uuid.UUID, user_id: uuid.UUID, actor_user_id: uuid.UUID, actor_role: str
+    ) -> StaffSummary:
+        return await self._set_status(
+            tenant_id=tenant_id, user_id=user_id, new_status=UserStatus.INACTIVE, actor_user_id=actor_user_id, actor_role=actor_role
+        )
 
-    async def reactivate_staff(self, *, tenant_id: uuid.UUID, user_id: uuid.UUID) -> StaffSummary:
-        return await self._set_status(tenant_id=tenant_id, user_id=user_id, new_status=UserStatus.ACTIVE)
+    async def reactivate_staff(
+        self, *, tenant_id: uuid.UUID, user_id: uuid.UUID, actor_user_id: uuid.UUID, actor_role: str
+    ) -> StaffSummary:
+        return await self._set_status(
+            tenant_id=tenant_id, user_id=user_id, new_status=UserStatus.ACTIVE, actor_user_id=actor_user_id, actor_role=actor_role
+        )
 
-    async def set_branches(self, *, tenant_id: uuid.UUID, user_id: uuid.UUID, branch_ids: list[uuid.UUID]) -> StaffSummary:
+    async def set_branches(
+        self, *, tenant_id: uuid.UUID, user_id: uuid.UUID, branch_ids: list[uuid.UUID], actor_user_id: uuid.UUID, actor_role: str
+    ) -> StaffSummary:
         async with tenant_session(tenant_id) as session:
             repo = StaffRepository(session)
             found = await repo.get_user_and_profile(user_id)
             if found is None:
                 raise HTTPException(status.HTTP_404_NOT_FOUND, "Staff member not found")
             await self._validate_branch_ids(session, branch_ids)
-            await BranchAssignmentRepository(session).set_branch_assignments(
-                tenant_id=tenant_id, user_id=user_id, branch_ids=branch_ids
-            )
+            branch_repo = BranchAssignmentRepository(session)
+            previous_branch_ids = await branch_repo.get_branch_ids(user_id)
+            await branch_repo.set_branch_assignments(tenant_id=tenant_id, user_id=user_id, branch_ids=branch_ids)
             updated = await repo.get_user_and_profile(user_id)
             assert updated is not None
+            await record_audit(
+                session,
+                tenant_id=tenant_id,
+                actor_user_id=actor_user_id,
+                actor_role=actor_role,
+                action="staff.branches.update",
+                entity_type="staff",
+                entity_id=user_id,
+                before={"branch_ids": [str(b) for b in previous_branch_ids]},
+                after={"branch_ids": [str(b) for b in branch_ids]},
+            )
             return _to_summary(updated[0], updated[1], branch_ids)

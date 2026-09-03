@@ -37,7 +37,9 @@ async def create_staff(
     current_user: CurrentUser = Depends(require_permission("staff.manage")),
     service: StaffService = Depends(get_staff_service),
 ) -> StaffCreateResponse:
-    return await service.create_staff(tenant_id=current_user.tenant_id, payload=payload)
+    return await service.create_staff(
+        tenant_id=current_user.tenant_id, payload=payload, actor_user_id=current_user.user_id, actor_role=current_user.role_code
+    )
 
 
 @router.get("", response_model=StaffListResponse)
@@ -76,7 +78,13 @@ async def update_staff(
     current_user: CurrentUser = Depends(require_permission("staff.manage")),
     service: StaffService = Depends(get_staff_service),
 ) -> StaffSummary:
-    return await service.update_staff(tenant_id=current_user.tenant_id, user_id=user_id, payload=payload)
+    return await service.update_staff(
+        tenant_id=current_user.tenant_id,
+        user_id=user_id,
+        payload=payload,
+        actor_user_id=current_user.user_id,
+        actor_role=current_user.role_code,
+    )
 
 
 @router.post("/{user_id}/deactivate", response_model=StaffSummary)
@@ -85,7 +93,9 @@ async def deactivate_staff(
     current_user: CurrentUser = Depends(require_permission("staff.manage")),
     service: StaffService = Depends(get_staff_service),
 ) -> StaffSummary:
-    return await service.deactivate_staff(tenant_id=current_user.tenant_id, user_id=user_id)
+    return await service.deactivate_staff(
+        tenant_id=current_user.tenant_id, user_id=user_id, actor_user_id=current_user.user_id, actor_role=current_user.role_code
+    )
 
 
 @router.post("/{user_id}/reactivate", response_model=StaffSummary)
@@ -94,7 +104,9 @@ async def reactivate_staff(
     current_user: CurrentUser = Depends(require_permission("staff.manage")),
     service: StaffService = Depends(get_staff_service),
 ) -> StaffSummary:
-    return await service.reactivate_staff(tenant_id=current_user.tenant_id, user_id=user_id)
+    return await service.reactivate_staff(
+        tenant_id=current_user.tenant_id, user_id=user_id, actor_user_id=current_user.user_id, actor_role=current_user.role_code
+    )
 
 
 @router.put("/{user_id}/branches", response_model=StaffSummary)
@@ -104,7 +116,13 @@ async def set_staff_branches(
     current_user: CurrentUser = Depends(require_permission("staff.manage")),
     service: StaffService = Depends(get_staff_service),
 ) -> StaffSummary:
-    return await service.set_branches(tenant_id=current_user.tenant_id, user_id=user_id, branch_ids=payload.branch_ids)
+    return await service.set_branches(
+        tenant_id=current_user.tenant_id,
+        user_id=user_id,
+        branch_ids=payload.branch_ids,
+        actor_user_id=current_user.user_id,
+        actor_role=current_user.role_code,
+    )
 
 
 @router.post("/{user_id}/invite/resend", response_model=InviteInfo)
