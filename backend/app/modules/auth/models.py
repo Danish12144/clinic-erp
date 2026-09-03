@@ -6,6 +6,10 @@ docs/schema/clinic_erp_schema.sql for the canonical DDL these mirror.
 
 Deliberately NOT in this module (belong to Staff/Doctor Management,
 built later): DoctorProfile, StaffProfile, UserBranchAssignment.
+
+`User.first_name`/`last_name` were added by migration 0005 (Doctor
+Management), not this module's own migrations — see that migration's
+docstring for why.
 """
 
 import uuid
@@ -85,6 +89,10 @@ class User(Base):
     id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
     tenant_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("clinics.id", ondelete="CASCADE"), nullable=False)
     role_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("roles.id"), nullable=False)
+    # Added in migration 0005 (Doctor Management) — absent from the original
+    # schema design, nullable since OTP-only patient users may never set one.
+    first_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    last_name: Mapped[str | None] = mapped_column(String, nullable=True)
     email: Mapped[str | None] = mapped_column(String, nullable=True)
     phone: Mapped[str | None] = mapped_column(String, nullable=True)
     password_hash: Mapped[str | None] = mapped_column(String, nullable=True)

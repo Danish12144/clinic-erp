@@ -43,6 +43,8 @@ class UserSummary(BaseModel):
 
     id: uuid.UUID
     tenant_id: uuid.UUID
+    first_name: str | None
+    last_name: str | None
     email: str | None
     phone: str | None
     role_code: str

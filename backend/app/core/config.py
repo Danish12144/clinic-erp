@@ -22,6 +22,8 @@ class Settings(BaseSettings):
     otp_expire_minutes: int = 5
     otp_max_attempts: int = 5
 
+    staff_invite_expire_hours: int = 72
+
     cors_origins: list[str] = ["http://localhost:3000"]
 
     @property

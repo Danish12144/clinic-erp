@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import get_settings
 from app.modules.auth.router import router as auth_router
+from app.modules.doctors.router import router as doctors_router
 from app.modules.patients.router import router as patients_router
 from app.modules.tenancy.router import branch_router, clinic_router
 
@@ -22,6 +23,7 @@ app.include_router(auth_router)
 app.include_router(clinic_router)
 app.include_router(branch_router)
 app.include_router(patients_router)
+app.include_router(doctors_router)
 
 
 @app.get("/health", tags=["health"])

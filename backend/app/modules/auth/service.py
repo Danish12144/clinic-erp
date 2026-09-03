@@ -166,6 +166,8 @@ class AuthService:
             user=UserSummary(
                 id=user.id,
                 tenant_id=user.tenant_id,
+                first_name=user.first_name,
+                last_name=user.last_name,
                 email=user.email,
                 phone=user.phone,
                 role_code=user.role.code,
@@ -234,6 +236,8 @@ class AuthService:
             return UserSummary(
                 id=user.id,
                 tenant_id=user.tenant_id,
+                first_name=user.first_name,
+                last_name=user.last_name,
                 email=user.email,
                 phone=user.phone,
                 role_code=user.role.code,

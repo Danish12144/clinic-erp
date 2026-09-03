@@ -223,6 +223,8 @@ CREATE TABLE users (
   id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   tenant_id     UUID NOT NULL REFERENCES clinics(id) ON DELETE CASCADE,
   role_id       UUID NOT NULL REFERENCES roles(id),
+  first_name    text,            -- added while building Doctor Management (see DATABASE-SCHEMA.md changelog)
+  last_name     text,
   email         text,
   phone         text,
   password_hash text,             -- nullable: OTP-only patient users have none
@@ -265,6 +267,21 @@ CREATE TABLE user_branch_assignments (
   branch_id  UUID NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
   created_at timestamptz NOT NULL DEFAULT now(),
   UNIQUE (user_id, branch_id)
+);
+
+-- Added while implementing Doctor Management (not in the original PRD §6
+-- entity sketch, like otp_codes/user_sessions before it): the "Owner
+-- invites staff, staff accept to set credentials" workflow (PRD §5) needs
+-- somewhere to hold a hashed, expiring invite token. Generic to any role,
+-- not doctor-specific.
+CREATE TABLE staff_invites (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id   UUID NOT NULL REFERENCES clinics(id) ON DELETE CASCADE,
+  user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  token_hash  text NOT NULL UNIQUE,
+  expires_at  timestamptz NOT NULL,
+  accepted_at timestamptz,
+  created_at  timestamptz NOT NULL DEFAULT now()
 );
 
 -- The mechanism behind PRD §13's two-layer permission resolution: a clinic
