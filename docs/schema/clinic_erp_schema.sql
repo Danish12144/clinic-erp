@@ -1001,6 +1001,8 @@ INSERT INTO permissions (code, module, description) VALUES
   ('patients.view_emr',           'patients',      'View full clinical record'),
   ('appointments.manage',         'appointments',  'Book/reschedule/cancel appointments for any patient'),
   ('appointments.book_own',       'appointments',  'Patient books/cancels their own appointment'),
+  ('appointments.view',           'appointments',  'View appointments — Doctor is further scoped to their own schedule'),
+  ('doctors.view_directory',      'doctors',       'View the read-only doctor directory (name, specialization, fee, schedule) for booking'),
   ('checkin.manage',              'queue',         'Check in patients, manage walk-ins'),
   ('queue.manage',                'queue',         'Manage queue/token status'),
   ('vitals.record',               'vitals',        'Record a vitals reading'),
@@ -1030,7 +1032,8 @@ INSERT INTO permissions (code, module, description) VALUES
 INSERT INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id FROM roles r, permissions p WHERE (r.code, p.code) IN (
   ('OWNER','clinic.manage_settings'), ('OWNER','staff.manage'), ('OWNER','patients.register'),
-  ('OWNER','patients.view_emr'), ('OWNER','patients.view_demographics'), ('OWNER','appointments.manage'), ('OWNER','checkin.manage'),
+  ('OWNER','patients.view_emr'), ('OWNER','patients.view_demographics'), ('OWNER','appointments.manage'),
+  ('OWNER','appointments.view'), ('OWNER','checkin.manage'),
   ('OWNER','queue.manage'), ('OWNER','vitals.record'), ('OWNER','billing.manage'),
   ('OWNER','payments.record'), ('OWNER','pharmacy.manage_catalog'), ('OWNER','pharmacy.dispense'),
   ('OWNER','lab.manage_catalog'), ('OWNER','lab.order'), ('OWNER','lab.enter_results'),
@@ -1039,23 +1042,25 @@ SELECT r.id, p.id FROM roles r, permissions p WHERE (r.code, p.code) IN (
   ('OWNER','branches.manage'),
 
   ('DOCTOR','doctor.manage_own_profile'), ('DOCTOR','patients.view_emr'),
-  ('DOCTOR','patients.view_demographics'), ('DOCTOR','appointments.manage'),
+  ('DOCTOR','patients.view_demographics'), ('DOCTOR','appointments.view'),
   ('DOCTOR','vitals.record'), ('DOCTOR','consultation.manage'), ('DOCTOR','prescription.manage'),
   ('DOCTOR','lab.order'), ('DOCTOR','billing.view_own'),
 
   ('RECEPTIONIST','patients.register'), ('RECEPTIONIST','patients.view_demographics'),
-  ('RECEPTIONIST','appointments.manage'), ('RECEPTIONIST','checkin.manage'),
+  ('RECEPTIONIST','appointments.manage'), ('RECEPTIONIST','appointments.view'),
+  ('RECEPTIONIST','doctors.view_directory'), ('RECEPTIONIST','checkin.manage'),
   ('RECEPTIONIST','queue.manage'), ('RECEPTIONIST','billing.manage'),
   ('RECEPTIONIST','payments.record'), ('RECEPTIONIST','crm.manage'),
   ('RECEPTIONIST','communications.send'),
 
   ('NURSE','patients.view_demographics'), ('NURSE','vitals.record'), ('NURSE','queue.manage'),
+  ('NURSE','appointments.view'),
 
   ('LAB_STAFF','lab.order'), ('LAB_STAFF','lab.enter_results'), ('LAB_STAFF','patients.view_demographics'),
 
   ('PHARMACY_STAFF','pharmacy.manage_catalog'), ('PHARMACY_STAFF','pharmacy.dispense'), ('PHARMACY_STAFF','patients.view_demographics'),
 
-  ('PATIENT','appointments.book_own'), ('PATIENT','billing.view_own')
+  ('PATIENT','appointments.book_own'), ('PATIENT','billing.view_own'), ('PATIENT','doctors.view_directory')
 );
 
 -- Placeholder plan catalog — expect this to be replaced once the
