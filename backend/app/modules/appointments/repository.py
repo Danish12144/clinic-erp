@@ -19,11 +19,12 @@ class AppointmentRepository:
         tenant_id: uuid.UUID,
         branch_id: uuid.UUID,
         patient_id: uuid.UUID,
-        doctor_id: uuid.UUID,
+        doctor_id: uuid.UUID | None,
         source,
         scheduled_at: datetime,
         duration_minutes: int,
         notes: str | None,
+        status: AppointmentStatus | None = None,
     ) -> Appointment:
         appointment = Appointment(
             tenant_id=tenant_id,
@@ -35,6 +36,8 @@ class AppointmentRepository:
             duration_minutes=duration_minutes,
             notes=notes,
         )
+        if status is not None:
+            appointment.status = status
         self._session.add(appointment)
         await self._session.flush()
         return appointment
@@ -102,6 +105,14 @@ class AppointmentRepository:
     async def reschedule(self, appointment_id: uuid.UUID, **fields: object) -> None:
         fields["updated_at"] = datetime.now(timezone.utc)
         await self._session.execute(update(Appointment).where(Appointment.id == appointment_id).values(**fields))
+
+    async def update_status(self, appointment_id: uuid.UUID, *, status: AppointmentStatus) -> None:
+        """Used by the Check-in module (CHECKED_IN, NO_SHOW) — distinct
+        from `reschedule`, which is about moving a SCHEDULED slot, not a
+        day-of status transition."""
+        await self._session.execute(
+            update(Appointment).where(Appointment.id == appointment_id).values(status=status, updated_at=datetime.now(timezone.utc))
+        )
 
     async def cancel(self, appointment_id: uuid.UUID, *, reason: str, cancelled_by: uuid.UUID) -> None:
         now = datetime.now(timezone.utc)

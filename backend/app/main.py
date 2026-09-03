@@ -5,6 +5,7 @@ from app.core.config import get_settings
 from app.modules.appointments.router import router as appointments_router
 from app.modules.audit.router import router as audit_router
 from app.modules.auth.router import router as auth_router
+from app.modules.checkin.router import encounter_router, queue_router
 from app.modules.doctors.router import router as doctors_router
 from app.modules.patients.router import router as patients_router
 from app.modules.staff.router import router as staff_router
@@ -30,6 +31,8 @@ app.include_router(doctors_router)
 app.include_router(staff_router)
 app.include_router(audit_router)
 app.include_router(appointments_router)
+app.include_router(encounter_router)
+app.include_router(queue_router)
 
 
 @app.get("/health", tags=["health"])
