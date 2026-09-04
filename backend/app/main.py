@@ -8,6 +8,7 @@ from app.modules.auth.router import router as auth_router
 from app.modules.billing.router import invoice_router as billing_invoice_router, payment_router as billing_payment_router
 from app.modules.checkin.router import encounter_router, queue_router
 from app.modules.consultation.router import consultation_router, prescription_router
+from app.modules.crm.router import router as crm_router
 from app.modules.doctors.router import router as doctors_router
 from app.modules.emr.router import document_router as emr_document_router, emr_router
 from app.modules.lab.router import order_router as lab_order_router, test_router as lab_test_router
@@ -55,6 +56,7 @@ app.include_router(medicine_router)
 app.include_router(pharmacy_router)
 app.include_router(lab_test_router)
 app.include_router(lab_order_router)
+app.include_router(crm_router)
 
 
 @app.get("/health", tags=["health"])

@@ -105,7 +105,10 @@ CREATE TYPE invoice_status        AS ENUM ('DRAFT','ISSUED','PARTIALLY_PAID','PA
 CREATE TYPE invoice_line_source   AS ENUM ('CONSULTATION','PROCEDURE','PHARMACY','LAB','OTHER');
 CREATE TYPE payment_method        AS ENUM ('CASH','CARD','UPI','NET_BANKING','INSURANCE','OTHER');
 CREATE TYPE lead_stage            AS ENUM ('NEW','CONTACTED','QUALIFIED','CONVERTED','LOST');
-CREATE TYPE follow_up_status      AS ENUM ('PENDING','DONE','CANCELLED');
+-- SENT/CONFIRMED/OVERDUE replace the simpler DONE, by direct instruction —
+-- see migration 0019's docstring. OVERDUE has no scheduler to transition
+-- rows into it; it's computed lazily, swept on every read.
+CREATE TYPE follow_up_status      AS ENUM ('PENDING','SENT','CONFIRMED','CANCELLED','OVERDUE');
 CREATE TYPE comm_channel          AS ENUM ('WHATSAPP','SMS','EMAIL','PUSH');
 CREATE TYPE comm_status           AS ENUM ('QUEUED','SENT','DELIVERED','FAILED');
 CREATE TYPE ai_feature            AS ENUM ('RECEPTIONIST','DOCTOR_ASSISTANT');
@@ -805,7 +808,10 @@ CREATE TABLE inventory_transactions (
 -- =============================================================================
 
 -- Deliberately distinct from `patients` — not every inquiry becomes a
--- registered patient (PRD §20).
+-- registered patient (PRD §20). Still design-only — the CRM & Follow-ups
+-- module (migration 0019) built only the clinical-follow-up half below;
+-- no code path creates or reads a `leads` row yet, so `communication_logs.
+-- lead_id` (below) has no FK to it yet either.
 CREATE TABLE leads (
   id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   tenant_id           UUID NOT NULL REFERENCES clinics(id) ON DELETE CASCADE,
@@ -820,22 +826,11 @@ CREATE TABLE leads (
   updated_at          timestamptz NOT NULL DEFAULT now()
 );
 
-CREATE TABLE follow_ups (
-  id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  tenant_id           UUID NOT NULL REFERENCES clinics(id) ON DELETE CASCADE,
-  patient_id          UUID REFERENCES patients(id),
-  lead_id             UUID REFERENCES leads(id),
-  assigned_to         UUID NOT NULL REFERENCES users(id),
-  due_at              timestamptz NOT NULL,
-  status              follow_up_status NOT NULL DEFAULT 'PENDING',
-  reason              text,
-  auto_generated      boolean NOT NULL DEFAULT false,
-  source_encounter_id UUID REFERENCES encounters(id),
-  created_at          timestamptz NOT NULL DEFAULT now(),
-  updated_at          timestamptz NOT NULL DEFAULT now(),
-  CHECK (patient_id IS NOT NULL OR lead_id IS NOT NULL)
-);
-
+-- Still design-only — no `notification_templates` row exists yet; nothing
+-- has needed templated content, only the plain stub `communication_logs`
+-- row Follow-ups already creates. `communication_logs.template_id` below
+-- has no FK to this table yet, same "column reserved, FK deferred"
+-- pattern `prescription_items.medicine_id` used before Pharmacy existed.
 CREATE TABLE notification_templates (
   id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   tenant_id      UUID NOT NULL REFERENCES clinics(id) ON DELETE CASCADE,
@@ -850,20 +845,55 @@ CREATE TABLE notification_templates (
 
 -- Every outbound (and, later, inbound) patient/lead touchpoint lands here
 -- regardless of trigger (CRM-initiated or system notification) — PRD §20.
+-- Built in migration 0019 (CRM & Follow-ups), the first and so far only
+-- writer — every follow-up stub-creates exactly one row here (task 3's
+-- "stubbed... outbox," `status` never advances past 'QUEUED' since no
+-- real SMS/WhatsApp provider is wired in). `lead_id`/`template_id` have no
+-- FK yet (see the two notes above) and no `CHECK` requiring one of
+-- `patient_id`/`lead_id` — Follow-ups always sets `patient_id`.
 CREATE TABLE communication_logs (
   id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   tenant_id          UUID NOT NULL REFERENCES clinics(id) ON DELETE CASCADE,
   patient_id         UUID REFERENCES patients(id),
-  lead_id            UUID REFERENCES leads(id),
+  lead_id            UUID,
   channel            comm_channel NOT NULL,
-  template_id        UUID REFERENCES notification_templates(id),
+  template_id        UUID,
   status             comm_status NOT NULL DEFAULT 'QUEUED',
   provider_message_id text,
   consent_basis      text,   -- DPDP-alignment: why we were allowed to send this
   sent_at            timestamptz,
-  created_at         timestamptz NOT NULL DEFAULT now(),
-  CHECK (patient_id IS NOT NULL OR lead_id IS NOT NULL)
+  created_at         timestamptz NOT NULL DEFAULT now()
 );
+CREATE INDEX ix_communication_logs_patient ON communication_logs (tenant_id, patient_id, created_at);
+
+-- Built narrower than a generic patient-or-lead task list, by direct
+-- instruction (migration 0019): `patient_id` is required, no `lead_id` at
+-- all — this task's own spec asked only for clinical follow-up ("linked
+-- to patient_id, doctor_id, encounter_id, clinic_id"), not CRM outreach on
+-- a not-yet-a-patient `Lead`. `doctor_id` and `created_by` (who scheduled
+-- it — `assigned_to` above was never built) were added for the same
+-- reason; `reminder_log_id` links to the one `communication_logs` row
+-- stub-created alongside every follow-up. If a future module needs
+-- lead-linked follow-ups, that's a real schema change here (a nullable
+-- `lead_id` + relaxing `patient_id NOT NULL`), not something already
+-- quietly supported.
+CREATE TABLE follow_ups (
+  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id        UUID NOT NULL REFERENCES clinics(id) ON DELETE CASCADE,
+  patient_id       UUID NOT NULL REFERENCES patients(id),
+  doctor_id        UUID REFERENCES users(id),
+  encounter_id     UUID REFERENCES encounters(id),
+  due_at           timestamptz NOT NULL,
+  status           follow_up_status NOT NULL DEFAULT 'PENDING',
+  reason           text,
+  reminder_log_id  UUID REFERENCES communication_logs(id),
+  created_by       UUID NOT NULL REFERENCES users(id),
+  created_at       timestamptz NOT NULL DEFAULT now(),
+  updated_at       timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX ix_follow_ups_patient ON follow_ups (tenant_id, patient_id, due_at);
+CREATE INDEX ix_follow_ups_doctor ON follow_ups (doctor_id);
+CREATE INDEX ix_follow_ups_due_status ON follow_ups (tenant_id, status, due_at);
 
 
 -- =============================================================================
@@ -1153,7 +1183,7 @@ SELECT r.id, p.id FROM roles r, permissions p WHERE (r.code, p.code) IN (
   ('DOCTOR','checkin.view'), ('DOCTOR','queue.view'),
   ('DOCTOR','consultation.manage'), ('DOCTOR','consultation.view'),
   ('DOCTOR','prescription.manage'), ('DOCTOR','prescription.view'), ('DOCTOR','dashboard.view_own'),
-  ('DOCTOR','lab.order'), ('DOCTOR','lab.view_results'), ('DOCTOR','billing.view_own'), ('DOCTOR','pharmacy.view_catalog'),
+  ('DOCTOR','lab.order'), ('DOCTOR','lab.view_results'), ('DOCTOR','billing.view_own'), ('DOCTOR','pharmacy.view_catalog'), ('DOCTOR','crm.manage'),
 
   ('RECEPTIONIST','patients.register'), ('RECEPTIONIST','patients.view_demographics'),
   ('RECEPTIONIST','appointments.manage'), ('RECEPTIONIST','appointments.view'),
