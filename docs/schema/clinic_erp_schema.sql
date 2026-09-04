@@ -861,6 +861,35 @@ CREATE TABLE documents (
 );
 CREATE INDEX ix_documents_owner ON documents (tenant_id, owner_type, owner_id);
 
+-- Purpose-built alternative to `documents` for clinical attachments (lab
+-- reports, scans, X-rays) surfaced in the Patient EMR timeline — added
+-- while building that module (migration 0016), by direct instruction:
+-- real FKs to patients/encounters instead of a polymorphic owner_type/
+-- owner_id pair. `documents` above remains reserved for the generic case
+-- (invoice PDFs, expense receipts, ...) once a Documents module needs it —
+-- the two are not meant to be unified without a fresh product decision.
+-- `storage_key` is a metadata pointer only (S3 key or external URL); no
+-- object-storage infrastructure exists in this backend to actually hold
+-- the bytes.
+CREATE TYPE medical_document_type AS ENUM ('LAB_REPORT','SCAN','XRAY','OTHER');
+
+CREATE TABLE medical_documents (
+  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id        UUID NOT NULL REFERENCES clinics(id) ON DELETE CASCADE,
+  patient_id       UUID NOT NULL REFERENCES patients(id),
+  encounter_id     UUID REFERENCES encounters(id),
+  document_type    medical_document_type NOT NULL,
+  title            text NOT NULL,
+  storage_key      text NOT NULL,
+  mime_type        text,
+  file_size_bytes  bigint,
+  notes            text,
+  uploaded_by      UUID NOT NULL REFERENCES users(id),
+  created_at       timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX ix_medical_documents_patient ON medical_documents (tenant_id, patient_id, created_at);
+CREATE INDEX ix_medical_documents_encounter ON medical_documents (encounter_id);
+
 
 -- =============================================================================
 -- 14. RESERVED FOR FUTURE PHASES (PRD §23, §24, ABDM note)
@@ -973,7 +1002,7 @@ BEGIN
     'prescriptions','prescription_items','lab_test_catalog','lab_orders','lab_results',
     'invoices','invoice_line_items','payments','expenses','inventory_items',
     'inventory_transactions','leads','follow_ups','notification_templates',
-    'communication_logs','audit_logs','documents','telemedicine_sessions',
+    'communication_logs','audit_logs','documents','medical_documents','telemedicine_sessions',
     'ai_interaction_logs','abha_links'
   ])
   LOOP
@@ -1019,6 +1048,7 @@ INSERT INTO permissions (code, module, description) VALUES
   ('patients.register',           'patients',      'Register new patients / edit demographics'),
   ('patients.view_demographics',  'patients',      'View patient demographic info (not full EMR)'),
   ('patients.view_emr',           'patients',      'View full clinical record'),
+  ('patients.manage_documents',   'patients',      'Upload/attach a medical document to a patient or encounter'),
   ('appointments.manage',         'appointments',  'Book/reschedule/cancel appointments for any patient'),
   ('appointments.book_own',       'appointments',  'Patient books/cancels their own appointment'),
   ('appointments.view',           'appointments',  'View appointments — Doctor is further scoped to their own schedule'),
@@ -1058,7 +1088,7 @@ INSERT INTO permissions (code, module, description) VALUES
 INSERT INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id FROM roles r, permissions p WHERE (r.code, p.code) IN (
   ('OWNER','clinic.manage_settings'), ('OWNER','staff.manage'), ('OWNER','patients.register'),
-  ('OWNER','patients.view_emr'), ('OWNER','patients.view_demographics'), ('OWNER','appointments.manage'),
+  ('OWNER','patients.view_emr'), ('OWNER','patients.view_demographics'), ('OWNER','patients.manage_documents'), ('OWNER','appointments.manage'),
   ('OWNER','appointments.view'), ('OWNER','checkin.manage'), ('OWNER','checkin.view'),
   ('OWNER','queue.manage'), ('OWNER','queue.view'), ('OWNER','vitals.record'), ('OWNER','vitals.view'),
   ('OWNER','consultation.manage'), ('OWNER','consultation.view'),
@@ -1070,7 +1100,7 @@ SELECT r.id, p.id FROM roles r, permissions p WHERE (r.code, p.code) IN (
   ('OWNER','communications.send'), ('OWNER','dashboard.view'), ('OWNER','audit.view'),
   ('OWNER','branches.manage'),
 
-  ('DOCTOR','doctor.manage_own_profile'), ('DOCTOR','patients.view_emr'),
+  ('DOCTOR','doctor.manage_own_profile'), ('DOCTOR','patients.view_emr'), ('DOCTOR','patients.manage_documents'),
   ('DOCTOR','patients.view_demographics'), ('DOCTOR','appointments.view'),
   ('DOCTOR','vitals.record'), ('DOCTOR','vitals.view'),
   ('DOCTOR','checkin.view'), ('DOCTOR','queue.view'),
@@ -1095,7 +1125,7 @@ SELECT r.id, p.id FROM roles r, permissions p WHERE (r.code, p.code) IN (
 
   ('PHARMACY_STAFF','pharmacy.manage_catalog'), ('PHARMACY_STAFF','pharmacy.dispense'), ('PHARMACY_STAFF','patients.view_demographics'),
 
-  ('PATIENT','appointments.book_own'), ('PATIENT','billing.view_own'), ('PATIENT','doctors.view_directory')
+  ('PATIENT','appointments.book_own'), ('PATIENT','billing.view_own'), ('PATIENT','doctors.view_directory'), ('PATIENT','patients.view_emr')
 );
 
 -- Placeholder plan catalog — expect this to be replaced once the
