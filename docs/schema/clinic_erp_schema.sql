@@ -757,21 +757,38 @@ CREATE TABLE payments (
 );
 CREATE INDEX ix_payments_invoice ON payments (invoice_id);
 
-CREATE TABLE expenses (
-  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  tenant_id   UUID NOT NULL REFERENCES clinics(id) ON DELETE CASCADE,
-  branch_id   UUID NOT NULL REFERENCES branches(id),
-  category    text NOT NULL,
-  amount      numeric(12,2) NOT NULL,
-  vendor      text,
-  incurred_at date NOT NULL DEFAULT current_date,
-  recorded_by UUID NOT NULL REFERENCES users(id),
-  notes       text,
-  created_at  timestamptz NOT NULL DEFAULT now(),
-  updated_at  timestamptz NOT NULL DEFAULT now()
-  -- Receipt attachment: a `documents` row with owner_type='EXPENSE',
-  -- owner_id=expenses.id — no receipt_document_id column needed here.
+-- Deviations from this table's original sketch, all by direct instruction
+-- (migration 0020, see docs/DATABASE-SCHEMA.md's changelog for the full
+-- rationale): `category` is a real enum, not free text; `payment_mode` is
+-- a wholly new column/enum, distinct from the patient-payment
+-- `payment_method` enum (vendor payments and patient payments are
+-- different domains with different value sets); `receipt_document_id` is
+-- a nullable UUID with no FK (same "column reserved, FK deferred" pattern
+-- as prescription_items.medicine_id before Pharmacy shipped — no generic
+-- `documents` table exists yet to point at); the vendor column keeps its
+-- original name rather than becoming `vendor_name`.
+CREATE TYPE expense_category AS ENUM (
+  'RENT', 'UTILITIES', 'SUPPLIES', 'SALARY', 'MAINTENANCE', 'MARKETING', 'OTHER'
 );
+CREATE TYPE expense_payment_mode AS ENUM ('CASH', 'UPI', 'CARD', 'BANK_TRANSFER');
+
+CREATE TABLE expenses (
+  id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id           UUID NOT NULL REFERENCES clinics(id) ON DELETE CASCADE,
+  branch_id           UUID NOT NULL REFERENCES branches(id),
+  category            expense_category NOT NULL,
+  amount              numeric(12,2) NOT NULL CHECK (amount > 0),
+  expense_date        date NOT NULL DEFAULT current_date,
+  payment_mode        expense_payment_mode NOT NULL,
+  vendor              text,
+  notes               text,
+  receipt_document_id UUID,
+  recorded_by         UUID NOT NULL REFERENCES users(id),
+  created_at          timestamptz NOT NULL DEFAULT now(),
+  updated_at          timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX ix_expenses_branch_date ON expenses (tenant_id, branch_id, expense_date);
+CREATE INDEX ix_expenses_category ON expenses (tenant_id, category);
 
 
 -- =============================================================================
@@ -1150,6 +1167,7 @@ INSERT INTO permissions (code, module, description) VALUES
   ('lab.view_results',            'laboratory',     'View lab orders/results — Patient further scoped to own COMPLETED orders'),
   ('inventory.manage',            'inventory',      'Manage general (non-pharmacy) inventory'),
   ('expenses.manage',             'finance',        'Record and manage expenses'),
+  ('expenses.record',             'finance',        'Record and view expenses (no edit) — petty-cash logging. Receptionist only, a deliberate PRD §3 matrix deviation (matrix says Receptionist "–" on general inventory & expenses)'),
   ('crm.manage',                  'crm',            'Manage leads and follow-ups'),
   ('communications.send',         'communications', 'Send patient/lead communications'),
   ('dashboard.view',              'analytics',      'View owner dashboard, analytics, and reports'),
@@ -1191,7 +1209,7 @@ SELECT r.id, p.id FROM roles r, permissions p WHERE (r.code, p.code) IN (
   ('RECEPTIONIST','queue.manage'), ('RECEPTIONIST','queue.view'), ('RECEPTIONIST','vitals.view'),
   ('RECEPTIONIST','billing.manage'),
   ('RECEPTIONIST','payments.record'), ('RECEPTIONIST','crm.manage'),
-  ('RECEPTIONIST','communications.send'),
+  ('RECEPTIONIST','communications.send'), ('RECEPTIONIST','expenses.record'),
 
   ('NURSE','patients.view_demographics'), ('NURSE','vitals.record'), ('NURSE','vitals.view'),
   ('NURSE','checkin.view'), ('NURSE','queue.view'),
