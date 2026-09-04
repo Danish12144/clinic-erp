@@ -35,10 +35,24 @@ from app.modules.consultation.schemas import (
 )
 from app.modules.letterhead.schemas import LetterheadPrintMode
 from app.modules.letterhead.service import LetterheadService
+from app.modules.pharmacy.repository import MedicineRepository
 
 
 def _own_scoped_doctor_filter(actor_role: str, actor_user_id: uuid.UUID, requested_doctor_id: uuid.UUID | None) -> uuid.UUID | None:
     return actor_user_id if actor_role == "DOCTOR" else requested_doctor_id
+
+
+async def _validate_catalog_medicine_ids(session, *, items) -> None:
+    """Added once the Pharmacy module (migration 0017) gave
+    `medicine_id` somewhere real to point at — a caller-supplied
+    `medicine_id` is trusted no further than any other foreign id, so
+    each one is checked against the tenant's own catalog (RLS-scoped,
+    same as everywhere else) before the prescription is created."""
+    medicine_repo = MedicineRepository(session)
+    for item in items:
+        medicine_id = item.get("medicine_id")
+        if medicine_id is not None and await medicine_repo.get_by_id(medicine_id) is None:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"Medicine '{medicine_id}' does not exist")
 
 
 class ConsultationService:
@@ -173,6 +187,7 @@ class PrescriptionService:
                 raise HTTPException(status.HTTP_403_FORBIDDEN, "Cannot issue a prescription for another doctor's consultation")
 
             items = [item.model_dump() for item in payload.items]
+            await _validate_catalog_medicine_ids(session, items=items)
             prescription = await PrescriptionRepository(session).create_with_items(
                 tenant_id=tenant_id, encounter_id=encounter.id, doctor_id=actor_user_id, items=items
             )
@@ -200,6 +215,7 @@ class PrescriptionService:
                 raise HTTPException(status.HTTP_409_CONFLICT, "This prescription has already been superseded")
 
             items = [item.model_dump() for item in payload.items]
+            await _validate_catalog_medicine_ids(session, items=items)
             new_prescription = await repo.create_with_items(
                 tenant_id=tenant_id, encounter_id=original.encounter_id, doctor_id=actor_user_id, items=items,
                 supersedes_prescription_id=original.id,

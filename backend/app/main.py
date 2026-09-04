@@ -12,6 +12,7 @@ from app.modules.doctors.router import router as doctors_router
 from app.modules.emr.router import document_router as emr_document_router, emr_router
 from app.modules.letterhead.router import router as letterhead_router
 from app.modules.patients.router import router as patients_router
+from app.modules.pharmacy.router import medicine_router, pharmacy_router
 from app.modules.reports.router import billing_summary_router, financial_report_router
 from app.modules.staff.router import router as staff_router
 from app.modules.tenancy.router import branch_router, clinic_router
@@ -49,6 +50,8 @@ app.include_router(billing_summary_router)
 app.include_router(financial_report_router)
 app.include_router(emr_router)
 app.include_router(emr_document_router)
+app.include_router(medicine_router)
+app.include_router(pharmacy_router)
 
 
 @app.get("/health", tags=["health"])

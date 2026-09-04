@@ -489,18 +489,26 @@ CREATE TABLE consultations (
 -- 7. PHARMACY
 -- =============================================================================
 
+-- `strength`, `manufacturer`, and `reorder_threshold` were added while
+-- building the Pharmacy module (migration 0017), by direct instruction —
+-- the original sketch omitted fields an actual catalog/reorder-alert
+-- feature needs, same "sketch gap, fill it, document it" pattern as
+-- `route` on `prescription_items` or `users.first_name`.
 CREATE TABLE medicines (
-  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  tenant_id    UUID NOT NULL REFERENCES clinics(id) ON DELETE CASCADE,
-  name         text NOT NULL,
-  generic_name text,
-  category     text,
-  dosage_form  text,
-  unit_price   numeric(10,2) NOT NULL DEFAULT 0,
-  sku          text,
-  is_active    boolean NOT NULL DEFAULT true,
-  created_at   timestamptz NOT NULL DEFAULT now(),
-  updated_at   timestamptz NOT NULL DEFAULT now()
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id         UUID NOT NULL REFERENCES clinics(id) ON DELETE CASCADE,
+  name              text NOT NULL,
+  generic_name      text,
+  category          text,
+  dosage_form       text,
+  strength          text,
+  manufacturer      text,
+  unit_price        numeric(10,2) NOT NULL DEFAULT 0,
+  sku               text,
+  reorder_threshold int NOT NULL DEFAULT 0,
+  is_active         boolean NOT NULL DEFAULT true,
+  created_at        timestamptz NOT NULL DEFAULT now(),
+  updated_at        timestamptz NOT NULL DEFAULT now()
 );
 CREATE UNIQUE INDEX ux_medicines_sku ON medicines (tenant_id, sku) WHERE sku IS NOT NULL;
 
@@ -537,6 +545,12 @@ CREATE TABLE pharmacy_inventory_transactions (
 );
 CREATE INDEX ix_pharm_txn_batch ON pharmacy_inventory_transactions (batch_id, created_at);
 
+-- `pharmacy_sales` (OTC sales not tied to a prescription, below) remains
+-- design-only — the Pharmacy module as actually built (migration 0017)
+-- deliberately scoped to catalog + batch inventory + prescription-linked
+-- dispensing only, by direct instruction. A future module can add OTC POS
+-- without touching anything built so far.
+
 -- OTC sales not tied to a prescription. `invoice_id` FK is added in
 -- Section 10 (after `invoices` exists) to avoid a forward reference.
 CREATE TABLE pharmacy_sales (
@@ -568,19 +582,23 @@ CREATE TABLE prescriptions (
   created_at                 timestamptz NOT NULL DEFAULT now()
 );
 
--- `medicine_id`'s `REFERENCES medicines(id)` is added by an `ALTER TABLE`
--- once the Pharmacy module creates `medicines` (Consultation/E-Prescription
--- was built first — see docs/DATABASE-SCHEMA.md's changelog) — a table
--- can't reference one that doesn't exist yet. Until then the API only
--- accepts `medicine_name_freetext`. `route` (e.g. "oral", "topical") was
--- added during that same module for the same reason `users.first_name`
--- was: the original sketch omitted a field an actual prescription form
--- needs.
+-- `medicine_id` references `medicines` directly here since this file's own
+-- section ordering already puts Pharmacy (§7) before Prescriptions (§8) —
+-- but the real migrations were built in the opposite order (Consultation/
+-- E-Prescription, migration 0013, well before Pharmacy, migration 0017),
+-- so the actual DB got this FK via a migration-0017 `ALTER TABLE` (a table
+-- can't reference one that doesn't exist yet at creation time). Both
+-- `medicine_id` and `medicine_name_freetext` are accepted by the API;
+-- exactly one of `medicine_id`/`medicine_name_freetext` is optional but at
+-- least one is required (see the CHECK below). `route` (e.g. "oral",
+-- "topical") was added while building Consultation, for the same reason
+-- `users.first_name` was: the original sketch omitted a field an actual
+-- prescription form needs.
 CREATE TABLE prescription_items (
   id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   tenant_id             UUID NOT NULL REFERENCES clinics(id) ON DELETE CASCADE,
   prescription_id       UUID NOT NULL REFERENCES prescriptions(id) ON DELETE CASCADE,
-  medicine_id           UUID,   -- FK to medicines(id) added once the Pharmacy module exists
+  medicine_id           UUID REFERENCES medicines(id),
   medicine_name_freetext text,   -- for medicines not in the tenant's catalog
   dosage                text,
   frequency             text,
@@ -1067,6 +1085,7 @@ INSERT INTO permissions (code, module, description) VALUES
   ('billing.view_own',            'billing',       'Patient views own invoices'),
   ('payments.record',             'billing',       'Record payments against an invoice'),
   ('pharmacy.manage_catalog',     'pharmacy',       'Manage medicine catalog and stock'),
+  ('pharmacy.view_catalog',       'pharmacy',       'View medicine catalog and batch stock levels — read-only'),
   ('pharmacy.dispense',           'pharmacy',       'Dispense prescriptions / process OTC sales'),
   ('lab.manage_catalog',          'laboratory',     'Manage lab test catalog'),
   ('lab.order',                   'laboratory',     'Order lab tests'),
@@ -1094,7 +1113,7 @@ SELECT r.id, p.id FROM roles r, permissions p WHERE (r.code, p.code) IN (
   ('OWNER','consultation.manage'), ('OWNER','consultation.view'),
   ('OWNER','prescription.manage'), ('OWNER','prescription.view'),
   ('OWNER','billing.manage'),
-  ('OWNER','payments.record'), ('OWNER','pharmacy.manage_catalog'), ('OWNER','pharmacy.dispense'),
+  ('OWNER','payments.record'), ('OWNER','pharmacy.manage_catalog'), ('OWNER','pharmacy.view_catalog'), ('OWNER','pharmacy.dispense'),
   ('OWNER','lab.manage_catalog'), ('OWNER','lab.order'), ('OWNER','lab.enter_results'),
   ('OWNER','inventory.manage'), ('OWNER','expenses.manage'), ('OWNER','crm.manage'),
   ('OWNER','communications.send'), ('OWNER','dashboard.view'), ('OWNER','audit.view'),
@@ -1106,7 +1125,7 @@ SELECT r.id, p.id FROM roles r, permissions p WHERE (r.code, p.code) IN (
   ('DOCTOR','checkin.view'), ('DOCTOR','queue.view'),
   ('DOCTOR','consultation.manage'), ('DOCTOR','consultation.view'),
   ('DOCTOR','prescription.manage'), ('DOCTOR','prescription.view'), ('DOCTOR','dashboard.view_own'),
-  ('DOCTOR','lab.order'), ('DOCTOR','billing.view_own'),
+  ('DOCTOR','lab.order'), ('DOCTOR','billing.view_own'), ('DOCTOR','pharmacy.view_catalog'),
 
   ('RECEPTIONIST','patients.register'), ('RECEPTIONIST','patients.view_demographics'),
   ('RECEPTIONIST','appointments.manage'), ('RECEPTIONIST','appointments.view'),
@@ -1123,7 +1142,7 @@ SELECT r.id, p.id FROM roles r, permissions p WHERE (r.code, p.code) IN (
 
   ('LAB_STAFF','lab.order'), ('LAB_STAFF','lab.enter_results'), ('LAB_STAFF','patients.view_demographics'),
 
-  ('PHARMACY_STAFF','pharmacy.manage_catalog'), ('PHARMACY_STAFF','pharmacy.dispense'), ('PHARMACY_STAFF','patients.view_demographics'),
+  ('PHARMACY_STAFF','pharmacy.manage_catalog'), ('PHARMACY_STAFF','pharmacy.view_catalog'), ('PHARMACY_STAFF','pharmacy.dispense'), ('PHARMACY_STAFF','patients.view_demographics'),
 
   ('PATIENT','appointments.book_own'), ('PATIENT','billing.view_own'), ('PATIENT','doctors.view_directory'), ('PATIENT','patients.view_emr')
 );

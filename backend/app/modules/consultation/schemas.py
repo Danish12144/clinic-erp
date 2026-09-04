@@ -58,17 +58,28 @@ class ConsultationListResponse(BaseModel):
 
 
 class PrescriptionItemCreateRequest(BaseModel):
-    """`medicine_id` (a catalog reference) isn't accepted yet — there is no
-    medicine catalog until the Pharmacy module exists (see this module's
-    migration 0013 docstring); every item is free-text for now."""
+    """`medicine_id` (a catalog reference) is optional — pass it to link
+    the item to the Pharmacy module's catalog (validated against the
+    tenant's `medicines` table by `PrescriptionService`, added once that
+    module existed — see migration 0017) so it can later be dispensed
+    against inventory; omit it for a free-text item not in the catalog.
+    At least one of `medicine_id`/`medicine_name_freetext` is required,
+    matching the DB's own `CHECK` constraint."""
 
-    medicine_name_freetext: str = Field(..., min_length=1, max_length=300)
+    medicine_id: uuid.UUID | None = None
+    medicine_name_freetext: str | None = Field(None, min_length=1, max_length=300)
     dosage: str | None = Field(None, max_length=200)
     frequency: str | None = Field(None, max_length=200)
     duration: str | None = Field(None, max_length=200)
     route: str | None = Field(None, max_length=100)
     prescribed_quantity: int = Field(..., ge=1, le=10000)
     instructions: str | None = Field(None, max_length=1000)
+
+    @model_validator(mode="after")
+    def medicine_id_or_freetext(self) -> "PrescriptionItemCreateRequest":
+        if self.medicine_id is None and not self.medicine_name_freetext:
+            raise ValueError("either medicine_id or medicine_name_freetext must be provided")
+        return self
 
 
 class PrescriptionCreateRequest(BaseModel):
