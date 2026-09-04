@@ -93,7 +93,10 @@ CREATE TYPE appointment_status    AS ENUM ('SCHEDULED','CHECKED_IN','IN_PROGRESS
 CREATE TYPE encounter_status      AS ENUM ('OPEN','IN_CONSULTATION','COMPLETED','CANCELLED');
 CREATE TYPE queue_token_status    AS ENUM ('WAITING','CALLED','IN_PROGRESS','DONE','NO_SHOW','SKIPPED');
 CREATE TYPE inventory_txn_type    AS ENUM ('RECEIVE','DISPENSE','SALE','ADJUST','EXPIRE_WRITE_OFF');
-CREATE TYPE lab_order_status      AS ENUM ('ORDERED','SAMPLE_COLLECTED','PROCESSING','COMPLETED','CANCELLED');
+-- RESULTED replaces PROCESSING, by direct instruction — see migration
+-- 0018's docstring. Sits between "results entered" and COMPLETED
+-- ("finalized/locked, visible to Doctor and, per clinic setting, Patient").
+CREATE TYPE lab_order_status      AS ENUM ('ORDERED','SAMPLE_COLLECTED','RESULTED','COMPLETED','CANCELLED');
 CREATE TYPE lab_result_flag       AS ENUM ('NORMAL','LOW','HIGH','CRITICAL');
 -- DRAFT/ISSUED (not just UNPAID) and NET_BANKING were added while
 -- building the Billing module (migration 0014), by direct instruction —
@@ -618,28 +621,52 @@ CREATE TABLE prescription_items (
 -- 9. LABORATORY
 -- =============================================================================
 
+-- `test_code`, `specimen_type`, `turnaround_hours` added while building the
+-- Lab module (migration 0018), by direct instruction — same "sketch gap,
+-- fill it" pattern as `strength`/`manufacturer` on `medicines`.
+-- `reference_ranges` is a JSONB *array* here (not the bare object this
+-- comment used to describe), default '[]'::jsonb — each entry is
+-- {min, max, unit, sex, age_min, age_max}, still "data, not code" per §19,
+-- just structured enough to support automatic out-of-range flagging by
+-- sex/age at once, not just a single flat range.
 CREATE TABLE lab_test_catalog (
-  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  tenant_id        UUID NOT NULL REFERENCES clinics(id) ON DELETE CASCADE,
-  name             text NOT NULL,
-  category         text,
-  price            numeric(10,2) NOT NULL DEFAULT 0,
-  reference_ranges jsonb NOT NULL DEFAULT '{}'::jsonb,   -- may vary by age/sex
-  is_active        boolean NOT NULL DEFAULT true,
-  created_at       timestamptz NOT NULL DEFAULT now(),
-  updated_at       timestamptz NOT NULL DEFAULT now()
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id         UUID NOT NULL REFERENCES clinics(id) ON DELETE CASCADE,
+  name              text NOT NULL,
+  test_code         text,
+  category          text,
+  specimen_type     text,
+  turnaround_hours  int,
+  price             numeric(10,2) NOT NULL DEFAULT 0,
+  reference_ranges  jsonb NOT NULL DEFAULT '[]'::jsonb,
+  is_active         boolean NOT NULL DEFAULT true,
+  created_at        timestamptz NOT NULL DEFAULT now(),
+  updated_at        timestamptz NOT NULL DEFAULT now()
 );
+CREATE UNIQUE INDEX ux_lab_test_code ON lab_test_catalog (tenant_id, test_code) WHERE test_code IS NOT NULL;
 
+-- `patient_id` (denormalized off `encounter_id`, same reasoning `vitals`/
+-- `medical_documents` already used) and `doctor_id` (the clinically-
+-- ordering doctor — distinct from `ordered_by`, the literal API actor, who
+-- may be Owner/Lab Staff keying the order in on the doctor's behalf) were
+-- added while building the Lab module, by direct instruction, along with
+-- `resulted_at`/`cancelled_at`/`cancelled_reason` mirroring the existing
+-- `sample_collected_at`/`completed_at` pattern for the new RESULTED state.
 CREATE TABLE lab_orders (
   id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   tenant_id           UUID NOT NULL REFERENCES clinics(id) ON DELETE CASCADE,
   encounter_id        UUID NOT NULL REFERENCES encounters(id) ON DELETE CASCADE,
+  patient_id          UUID NOT NULL REFERENCES patients(id),
+  doctor_id           UUID REFERENCES users(id),
   test_id             UUID NOT NULL REFERENCES lab_test_catalog(id),
   ordered_by          UUID NOT NULL REFERENCES users(id),
   status              lab_order_status NOT NULL DEFAULT 'ORDERED',
   ordered_at          timestamptz NOT NULL DEFAULT now(),
   sample_collected_at timestamptz,
+  resulted_at         timestamptz,
   completed_at        timestamptz,
+  cancelled_at        timestamptz,
+  cancelled_reason    text,
   created_at          timestamptz NOT NULL DEFAULT now(),
   updated_at          timestamptz NOT NULL DEFAULT now()
 );
@@ -1090,6 +1117,7 @@ INSERT INTO permissions (code, module, description) VALUES
   ('lab.manage_catalog',          'laboratory',     'Manage lab test catalog'),
   ('lab.order',                   'laboratory',     'Order lab tests'),
   ('lab.enter_results',           'laboratory',     'Enter/finalize lab results'),
+  ('lab.view_results',            'laboratory',     'View lab orders/results — Patient further scoped to own COMPLETED orders'),
   ('inventory.manage',            'inventory',      'Manage general (non-pharmacy) inventory'),
   ('expenses.manage',             'finance',        'Record and manage expenses'),
   ('crm.manage',                  'crm',            'Manage leads and follow-ups'),
@@ -1114,7 +1142,7 @@ SELECT r.id, p.id FROM roles r, permissions p WHERE (r.code, p.code) IN (
   ('OWNER','prescription.manage'), ('OWNER','prescription.view'),
   ('OWNER','billing.manage'),
   ('OWNER','payments.record'), ('OWNER','pharmacy.manage_catalog'), ('OWNER','pharmacy.view_catalog'), ('OWNER','pharmacy.dispense'),
-  ('OWNER','lab.manage_catalog'), ('OWNER','lab.order'), ('OWNER','lab.enter_results'),
+  ('OWNER','lab.manage_catalog'), ('OWNER','lab.order'), ('OWNER','lab.enter_results'), ('OWNER','lab.view_results'),
   ('OWNER','inventory.manage'), ('OWNER','expenses.manage'), ('OWNER','crm.manage'),
   ('OWNER','communications.send'), ('OWNER','dashboard.view'), ('OWNER','audit.view'),
   ('OWNER','branches.manage'),
@@ -1125,7 +1153,7 @@ SELECT r.id, p.id FROM roles r, permissions p WHERE (r.code, p.code) IN (
   ('DOCTOR','checkin.view'), ('DOCTOR','queue.view'),
   ('DOCTOR','consultation.manage'), ('DOCTOR','consultation.view'),
   ('DOCTOR','prescription.manage'), ('DOCTOR','prescription.view'), ('DOCTOR','dashboard.view_own'),
-  ('DOCTOR','lab.order'), ('DOCTOR','billing.view_own'), ('DOCTOR','pharmacy.view_catalog'),
+  ('DOCTOR','lab.order'), ('DOCTOR','lab.view_results'), ('DOCTOR','billing.view_own'), ('DOCTOR','pharmacy.view_catalog'),
 
   ('RECEPTIONIST','patients.register'), ('RECEPTIONIST','patients.view_demographics'),
   ('RECEPTIONIST','appointments.manage'), ('RECEPTIONIST','appointments.view'),
@@ -1140,11 +1168,11 @@ SELECT r.id, p.id FROM roles r, permissions p WHERE (r.code, p.code) IN (
   ('NURSE','consultation.view'), ('NURSE','prescription.view'),
   ('NURSE','appointments.view'),
 
-  ('LAB_STAFF','lab.order'), ('LAB_STAFF','lab.enter_results'), ('LAB_STAFF','patients.view_demographics'),
+  ('LAB_STAFF','lab.order'), ('LAB_STAFF','lab.enter_results'), ('LAB_STAFF','lab.view_results'), ('LAB_STAFF','patients.view_demographics'),
 
   ('PHARMACY_STAFF','pharmacy.manage_catalog'), ('PHARMACY_STAFF','pharmacy.view_catalog'), ('PHARMACY_STAFF','pharmacy.dispense'), ('PHARMACY_STAFF','patients.view_demographics'),
 
-  ('PATIENT','appointments.book_own'), ('PATIENT','billing.view_own'), ('PATIENT','doctors.view_directory'), ('PATIENT','patients.view_emr')
+  ('PATIENT','appointments.book_own'), ('PATIENT','billing.view_own'), ('PATIENT','doctors.view_directory'), ('PATIENT','patients.view_emr'), ('PATIENT','lab.view_results')
 );
 
 -- Placeholder plan catalog — expect this to be replaced once the

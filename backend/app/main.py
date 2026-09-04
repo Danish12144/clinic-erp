@@ -10,6 +10,7 @@ from app.modules.checkin.router import encounter_router, queue_router
 from app.modules.consultation.router import consultation_router, prescription_router
 from app.modules.doctors.router import router as doctors_router
 from app.modules.emr.router import document_router as emr_document_router, emr_router
+from app.modules.lab.router import order_router as lab_order_router, test_router as lab_test_router
 from app.modules.letterhead.router import router as letterhead_router
 from app.modules.patients.router import router as patients_router
 from app.modules.pharmacy.router import medicine_router, pharmacy_router
@@ -52,6 +53,8 @@ app.include_router(emr_router)
 app.include_router(emr_document_router)
 app.include_router(medicine_router)
 app.include_router(pharmacy_router)
+app.include_router(lab_test_router)
+app.include_router(lab_order_router)
 
 
 @app.get("/health", tags=["health"])

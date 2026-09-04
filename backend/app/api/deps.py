@@ -98,3 +98,39 @@ def require_any_permission(*permission_codes: str):
         return current_user
 
     return _check
+
+
+def require_feature_flag(setting_key: str, *, default: bool = False):
+    """Route-dependency factory gating a whole module behind a per-tenant
+    on/off switch: `Depends(require_feature_flag("features.lab_enabled"))`.
+    First needed by the Lab module (task: "lab routes... accessible only
+    when lab feature flag is enabled for that clinic") but deliberately
+    generic — any future optional/paid module can reuse it with its own
+    `setting_key`.
+
+    Reads the flag from the Tenancy module's generic `TenantSetting` bag
+    (no new table) — an Owner toggles it via the existing
+    `PUT /api/v1/clinics/me/settings/{key}` endpoint, nothing new to build
+    for the toggle itself. Unlike `require_permission`, this always hits
+    the DB (the flag isn't embedded in the JWT — it can change without a
+    token refresh, and gating an entire module is rare enough not to
+    warrant optimizing away the query).
+    """
+
+    async def _check(current_user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
+        # Local import: app.modules.tenancy would otherwise need to import
+        # app.api.deps too (every module's router does), which would be a
+        # circular import at module load time if this were a top-level import.
+        from app.modules.tenancy.repository import TenantSettingRepository
+
+        async with tenant_session(current_user.tenant_id) as session:
+            setting = await TenantSettingRepository(session).get_by_key(tenant_id=current_user.tenant_id, key=setting_key)
+        enabled = bool(setting.value) if setting is not None else default
+        if not enabled:
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                f"This feature ('{setting_key}') is not enabled for this clinic",
+            )
+        return current_user
+
+    return _check
