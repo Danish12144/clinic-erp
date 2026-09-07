@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import get_settings
 from app.modules.appointments.router import router as appointments_router
 from app.modules.audit.router import router as audit_router
-from app.modules.auth.router import router as auth_router
+from app.modules.auth.router import permission_override_router, router as auth_router
 from app.modules.billing.router import invoice_router as billing_invoice_router, payment_router as billing_payment_router
 from app.modules.checkin.router import encounter_router, queue_router
 from app.modules.consultation.router import consultation_router, prescription_router
@@ -12,6 +12,7 @@ from app.modules.crm.router import router as crm_router
 from app.modules.doctors.router import router as doctors_router
 from app.modules.emr.router import document_router as emr_document_router, emr_router
 from app.modules.expenses.router import router as expenses_router
+from app.modules.files.router import router as files_router
 from app.modules.inventory.router import alerts_router as inventory_alerts_router, items_router as inventory_items_router
 from app.modules.lab.router import order_router as lab_order_router, test_router as lab_test_router
 from app.modules.leads.router import router as leads_router
@@ -37,6 +38,7 @@ app.add_middleware(
 )
 
 app.include_router(auth_router)
+app.include_router(permission_override_router)
 app.include_router(clinic_router)
 app.include_router(branch_router)
 app.include_router(patients_router)
@@ -67,6 +69,7 @@ app.include_router(inventory_alerts_router)
 app.include_router(leads_router)
 app.include_router(notification_template_router)
 app.include_router(notification_router)
+app.include_router(files_router)
 
 
 @app.get("/health", tags=["health"])

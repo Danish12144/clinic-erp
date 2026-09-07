@@ -39,6 +39,9 @@ env/
 postgres-data/
 redis-data/
 
+# Local file storage backend (app/core/storage.py) — dev-only uploaded files
+backend/var/
+
 # IDE & OS
 .DS_Store
 Thumbs.db

@@ -177,3 +177,35 @@ async def test_permission_override_in_one_tenant_does_not_leak_to_another(
         assert "vitals.record" not in set(me_b.json()["permissions"])
     finally:
         await _teardown([clinic_a.id, clinic_b.id])
+
+
+async def test_permission_override_write_endpoint_is_tenant_isolated(api_client: AsyncClient, role_map: dict[str, uuid.UUID]) -> None:
+    """The new write side (migration-free — `permission_overrides` already
+    existed; this is `PUT/GET/DELETE /api/v1/permission-overrides`) must
+    respect tenant boundaries exactly like every other endpoint: Owner A
+    can't see or delete Owner B's overrides, even by guessing an id."""
+    clinic_a, _ = await _create_clinic_with_owner(role_map, email="owner@tenant-j.clinic", password="pw")
+    clinic_b, _ = await _create_clinic_with_owner(role_map, email="owner@tenant-k.clinic", password="pw")
+
+    try:
+        login_a = await api_client.post("/api/v1/auth/staff/login", json={"clinic_slug": clinic_a.slug, "identifier": "owner@tenant-j.clinic", "password": "pw"})
+        login_b = await api_client.post("/api/v1/auth/staff/login", json={"clinic_slug": clinic_b.slug, "identifier": "owner@tenant-k.clinic", "password": "pw"})
+        headers_a = {"Authorization": f"Bearer {login_a.json()['access_token']}"}
+        headers_b = {"Authorization": f"Bearer {login_b.json()['access_token']}"}
+
+        created = await api_client.put(
+            "/api/v1/permission-overrides", json={"role_code": "RECEPTIONIST", "permission_code": "vitals.record", "granted": True}, headers=headers_a
+        )
+        assert created.status_code == 200
+        override_id = created.json()["id"]
+
+        list_b = await api_client.get("/api/v1/permission-overrides", headers=headers_b)
+        assert all(o["id"] != override_id for o in list_b.json()["items"])
+
+        cross_tenant_delete = await api_client.delete(f"/api/v1/permission-overrides/{override_id}", headers=headers_b)
+        assert cross_tenant_delete.status_code == 404
+
+        still_there = await api_client.get("/api/v1/permission-overrides", headers=headers_a)
+        assert any(o["id"] == override_id for o in still_there.json()["items"])
+    finally:
+        await _teardown([clinic_a.id, clinic_b.id])

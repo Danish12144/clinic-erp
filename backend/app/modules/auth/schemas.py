@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class StaffLoginRequest(BaseModel):
@@ -107,3 +107,44 @@ class AcceptInviteRequest(BaseModel):
 
 class AcceptInviteResponse(BaseModel):
     message: str
+
+
+# ---- Permission overrides (PRD §13's write side) -------------------------------
+
+
+class PermissionOverrideSetRequest(BaseModel):
+    """Exactly one of `role_code`/`user_id` must be supplied — matches the
+    DB `CHECK` on `permission_overrides` (a role-wide override or a single
+    staff member's override, never both, never neither). `PUT` semantics:
+    calling this again for the same target+permission replaces the prior
+    `granted` value rather than erroring or duplicating."""
+
+    role_code: str | None = Field(None, description='e.g. "RECEPTIONIST" — one of the 8 system role codes')
+    user_id: uuid.UUID | None = None
+    permission_code: str = Field(..., min_length=1, description='e.g. "vitals.record"')
+    granted: bool
+
+    @model_validator(mode="after")
+    def exactly_one_target(self) -> "PermissionOverrideSetRequest":
+        if (self.role_code is not None) == (self.user_id is not None):
+            raise ValueError("provide exactly one of role_code or user_id")
+        return self
+
+
+class PermissionOverrideSummary(BaseModel):
+    id: uuid.UUID
+    tenant_id: uuid.UUID
+    role_code: str | None
+    user_id: uuid.UUID | None
+    permission_code: str
+    granted: bool
+    created_by: uuid.UUID | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class PermissionOverrideListResponse(BaseModel):
+    items: list[PermissionOverrideSummary]
+    total: int
+    limit: int
+    offset: int

@@ -17,11 +17,14 @@ from fastapi import HTTPException, status
 from app.core import security
 from app.core.config import get_settings
 from app.core.db import tenant_session
+from app.modules.audit.service import record as record_audit
 from app.modules.auth.models import User, UserStatus
 from app.modules.auth.otp_sender import OtpSender, get_otp_sender
 from app.modules.auth.repository import (
     OtpRepository,
+    PermissionOverrideRepository,
     PermissionRepository,
+    RoleRepository,
     SessionRepository,
     StaffInviteRepository,
     TenantResolutionRepository,
@@ -32,6 +35,9 @@ from app.modules.auth.schemas import (
     AccessTokenOnlyResponse,
     InviteInfo,
     OtpRequestResponse,
+    PermissionOverrideListResponse,
+    PermissionOverrideSetRequest,
+    PermissionOverrideSummary,
     SessionSummary,
     TokenResponse,
     UserSummary,
@@ -289,6 +295,92 @@ class AuthService:
             if record is None:
                 raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
             await session_repo.revoke(record.id)
+
+
+class PermissionOverrideService:
+    """The write side of PRD §13's two-layer RBAC resolution — closes the
+    gap flagged repeatedly across this session's module notes (first in
+    Vitals'): the mechanism has been readable (`PermissionRepository.
+    resolve_effective_permissions`, embedded in every JWT since migration
+    0001) but had no endpoint to actually create/change an override until
+    now. A revoked/granted override takes effect on the affected user's
+    *next token refresh*, not instantly — same latency tradeoff PRD §13
+    itself calls out, unchanged by this module.
+    """
+
+    async def set_override(self, *, tenant_id: uuid.UUID, payload: PermissionOverrideSetRequest, actor_user_id: uuid.UUID, actor_role: str) -> PermissionOverrideSummary:
+        async with tenant_session(tenant_id) as session:
+            permission = await PermissionRepository(session).get_by_code(payload.permission_code)
+            if permission is None:
+                raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"Permission '{payload.permission_code}' does not exist")
+
+            override_repo = PermissionOverrideRepository(session)
+            if payload.role_code is not None:
+                role = await RoleRepository(session).get_by_code(payload.role_code)
+                if role is None:
+                    raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"Role '{payload.role_code}' does not exist")
+                before = await override_repo.get_for_role(tenant_id=tenant_id, role_id=role.id, permission_id=permission.id)
+                before_granted = before.granted if before is not None else None
+                override = await override_repo.upsert_for_role(
+                    tenant_id=tenant_id, role_id=role.id, permission_id=permission.id, granted=payload.granted, created_by=actor_user_id,
+                )
+            else:
+                assert payload.user_id is not None
+                if await UserRepository(session).get_by_id(payload.user_id) is None:
+                    raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"User '{payload.user_id}' does not exist")
+                before = await override_repo.get_for_user(tenant_id=tenant_id, user_id=payload.user_id, permission_id=permission.id)
+                before_granted = before.granted if before is not None else None
+                override = await override_repo.upsert_for_user(
+                    tenant_id=tenant_id, user_id=payload.user_id, permission_id=permission.id, granted=payload.granted, created_by=actor_user_id,
+                )
+
+            summary = PermissionOverrideSummary(
+                id=override.id, tenant_id=tenant_id, role_code=payload.role_code, user_id=payload.user_id,
+                permission_code=payload.permission_code, granted=override.granted, created_by=override.created_by,
+                created_at=override.created_at, updated_at=override.updated_at,
+            )
+            await record_audit(
+                session, tenant_id=tenant_id, actor_user_id=actor_user_id, actor_role=actor_role,
+                action="permission_override.set", entity_type="permission_override", entity_id=override.id,
+                before={"granted": before_granted} if before_granted is not None else None,
+                after=summary.model_dump(mode="json"),
+            )
+            return summary
+
+    async def search_overrides(
+        self, *, tenant_id: uuid.UUID, role_code: str | None, user_id: uuid.UUID | None, limit: int, offset: int,
+    ) -> PermissionOverrideListResponse:
+        async with tenant_session(tenant_id) as session:
+            role_id = None
+            if role_code is not None:
+                role = await RoleRepository(session).get_by_code(role_code)
+                if role is None:
+                    raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"Role '{role_code}' does not exist")
+                role_id = role.id
+
+            rows, total = await PermissionOverrideRepository(session).search(tenant_id=tenant_id, role_id=role_id, user_id=user_id, limit=limit, offset=offset)
+            items = [
+                PermissionOverrideSummary(
+                    id=override.id, tenant_id=override.tenant_id, role_code=role_code_value, user_id=override.user_id,
+                    permission_code=permission_code_value, granted=override.granted, created_by=override.created_by,
+                    created_at=override.created_at, updated_at=override.updated_at,
+                )
+                for override, role_code_value, permission_code_value in rows
+            ]
+            return PermissionOverrideListResponse(items=items, total=total, limit=limit, offset=offset)
+
+    async def delete_override(self, *, tenant_id: uuid.UUID, override_id: uuid.UUID, actor_user_id: uuid.UUID, actor_role: str) -> None:
+        async with tenant_session(tenant_id) as session:
+            repo = PermissionOverrideRepository(session)
+            override = await repo.get_by_id(override_id)
+            if override is None:
+                raise HTTPException(status.HTTP_404_NOT_FOUND, "Permission override not found")
+            await repo.delete(override_id)
+            await record_audit(
+                session, tenant_id=tenant_id, actor_user_id=actor_user_id, actor_role=actor_role,
+                action="permission_override.delete", entity_type="permission_override", entity_id=override_id,
+                before={"granted": override.granted}, after=None,
+            )
 
 
 async def issue_staff_invite(session, *, tenant_id: uuid.UUID, user_id: uuid.UUID) -> InviteInfo:

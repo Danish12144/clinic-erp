@@ -1,8 +1,8 @@
 import uuid
 
-from fastapi import APIRouter, Depends, Request, status
+from fastapi import APIRouter, Depends, Query, Request, status
 
-from app.api.deps import CurrentUser, get_current_user
+from app.api.deps import CurrentUser, get_current_user, require_permission
 from app.modules.auth.schemas import (
     AcceptInviteRequest,
     AcceptInviteResponse,
@@ -12,18 +12,26 @@ from app.modules.auth.schemas import (
     OtpRequestPayload,
     OtpRequestResponse,
     OtpVerifyPayload,
+    PermissionOverrideListResponse,
+    PermissionOverrideSetRequest,
+    PermissionOverrideSummary,
     RefreshRequest,
     SessionSummary,
     StaffLoginRequest,
     TokenResponse,
 )
-from app.modules.auth.service import AuthService
+from app.modules.auth.service import AuthService, PermissionOverrideService
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
+permission_override_router = APIRouter(prefix="/api/v1/permission-overrides", tags=["auth"])
 
 
 def get_auth_service() -> AuthService:
     return AuthService()
+
+
+def get_permission_override_service() -> PermissionOverrideService:
+    return PermissionOverrideService()
 
 
 @router.post("/staff/login", response_model=TokenResponse)
@@ -105,3 +113,40 @@ async def revoke_session(
     service: AuthService = Depends(get_auth_service),
 ) -> None:
     await service.revoke_session(tenant_id=current_user.tenant_id, user_id=current_user.user_id, session_id=session_id)
+
+
+# ---- Permission overrides (PRD §13's write side) -------------------------------
+#
+# `staff.manage` (Owner-only, per the PRD §3 matrix's "Staff, roles &
+# permissions" row) gates every route here — the same permission that
+# already gates Staff/Doctor Management's own role-assignment endpoints.
+
+
+@permission_override_router.put("", response_model=PermissionOverrideSummary)
+async def set_permission_override(
+    payload: PermissionOverrideSetRequest,
+    current_user: CurrentUser = Depends(require_permission("staff.manage")),
+    service: PermissionOverrideService = Depends(get_permission_override_service),
+) -> PermissionOverrideSummary:
+    return await service.set_override(tenant_id=current_user.tenant_id, payload=payload, actor_user_id=current_user.user_id, actor_role=current_user.role_code)
+
+
+@permission_override_router.get("", response_model=PermissionOverrideListResponse)
+async def search_permission_overrides(
+    role_code: str | None = Query(None),
+    user_id: uuid.UUID | None = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    current_user: CurrentUser = Depends(require_permission("staff.manage")),
+    service: PermissionOverrideService = Depends(get_permission_override_service),
+) -> PermissionOverrideListResponse:
+    return await service.search_overrides(tenant_id=current_user.tenant_id, role_code=role_code, user_id=user_id, limit=limit, offset=offset)
+
+
+@permission_override_router.delete("/{override_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_permission_override(
+    override_id: uuid.UUID,
+    current_user: CurrentUser = Depends(require_permission("staff.manage")),
+    service: PermissionOverrideService = Depends(get_permission_override_service),
+) -> None:
+    await service.delete_override(tenant_id=current_user.tenant_id, override_id=override_id, actor_user_id=current_user.user_id, actor_role=current_user.role_code)

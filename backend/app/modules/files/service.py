@@ -1,0 +1,174 @@
+"""File Storage & Uploads business logic — PRD-ARCHITECTURE.md §8/§15,
+migration 0025. See app/modules/files/models.py's module docstring for why
+this is a small generic registry, and app/core/storage.py for the
+swappable-backend design.
+
+**Authorization is per-`owner_type`, not one blanket permission** — this
+generic endpoint serves three unrelated business contexts (patient
+documents, lab reports, clinic letterhead assets), each with its own
+existing, correctly-scoped permission in its own module. `_WRITE_PERMISSION_
+BY_OWNER_TYPE`/`_READ_PERMISSION_BY_OWNER_TYPE` dispatch to those — no new
+permission codes were needed for this module at all. Adding a fourth
+owner_type later is a one-line addition to both dicts (plus, if it needs
+row-level scoping like `PATIENT_DOCUMENT`/`LAB_REPORT` do, a branch in
+`_row_scope_allows`), not a migration.
+
+**Row-level scoping beyond the coarse permission check is deliberately
+replicated from each source module**, not reinvented: `PATIENT_DOCUMENT`
+reuses EMR's own Patient-self/Doctor-treated-patient rule
+(`EmrRepository.doctor_has_treated_patient`), `LAB_REPORT` reuses Lab's own
+"Patient sees only their own COMPLETED order's report" rule. Without this,
+a generic file registry sitting outside those modules would be a
+side-channel around access rules those modules already enforce correctly
+on their own data.
+"""
+
+import uuid
+
+from fastapi import HTTPException, status
+
+from app.core.db import tenant_session
+from app.core.storage import FileStorageBackend, get_storage_backend
+from app.modules.audit.service import record as record_audit
+from app.modules.emr.repository import EmrRepository
+from app.modules.files.models import Document
+from app.modules.files.repository import DocumentRepository
+from app.modules.files.schemas import DocumentListResponse, DocumentSummary
+from app.modules.lab.models import LabOrderStatus
+from app.modules.lab.repository import LabOrderRepository
+from app.modules.patients.repository import PatientRepository
+
+_WRITE_PERMISSION_BY_OWNER_TYPE: dict[str, str] = {
+    "PATIENT_DOCUMENT": "patients.manage_documents",
+    "LAB_REPORT": "lab.enter_results",
+    "LETTERHEAD_ASSET": "clinic.manage_settings",
+}
+_READ_PERMISSION_BY_OWNER_TYPE: dict[str, str | None] = {
+    "PATIENT_DOCUMENT": "patients.view_emr",
+    "LAB_REPORT": "lab.view_results",
+    "LETTERHEAD_ASSET": None,  # open to any authenticated user, matching Letterhead's own existing read policy
+}
+
+
+def _to_summary(document: Document) -> DocumentSummary:
+    return DocumentSummary(
+        id=document.id, tenant_id=document.tenant_id, owner_type=document.owner_type, owner_id=document.owner_id,
+        original_filename=document.original_filename, mime_type=document.mime_type, file_size_bytes=document.file_size_bytes,
+        uploaded_by=document.uploaded_by, created_at=document.created_at, download_url=f"/api/v1/files/{document.id}/content",
+    )
+
+
+async def _validate_owner_reference(session, *, tenant_id: uuid.UUID, owner_type: str, owner_id: uuid.UUID) -> None:
+    if owner_type == "PATIENT_DOCUMENT":
+        if await PatientRepository(session).get_by_id(owner_id) is None:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"Patient '{owner_id}' does not exist")
+    elif owner_type == "LAB_REPORT":
+        if await LabOrderRepository(session).get_by_id(owner_id) is None:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"Lab order '{owner_id}' does not exist")
+    elif owner_type == "LETTERHEAD_ASSET":
+        if owner_id != tenant_id:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "owner_id for LETTERHEAD_ASSET must be the tenant's own clinic id")
+
+
+async def _row_scope_allows(session, *, owner_type: str, owner_id: uuid.UUID, actor_user_id: uuid.UUID, actor_role: str) -> bool:
+    if owner_type == "PATIENT_DOCUMENT":
+        if actor_role == "PATIENT":
+            own_patient = await PatientRepository(session).get_by_user_id(actor_user_id)
+            return own_patient is not None and own_patient.id == owner_id
+        if actor_role == "DOCTOR":
+            return await EmrRepository(session).doctor_has_treated_patient(patient_id=owner_id, doctor_user_id=actor_user_id)
+        return True
+    if owner_type == "LAB_REPORT":
+        if actor_role == "PATIENT":
+            lab_order = await LabOrderRepository(session).get_by_id(owner_id)
+            own_patient = await PatientRepository(session).get_by_user_id(actor_user_id)
+            return (
+                lab_order is not None and own_patient is not None
+                and lab_order.patient_id == own_patient.id and lab_order.status == LabOrderStatus.COMPLETED
+            )
+        return True
+    return True  # LETTERHEAD_ASSET: tenant-wide, no further row scoping
+
+
+class FileService:
+    def __init__(self, storage: FileStorageBackend | None = None) -> None:
+        self._storage = storage or get_storage_backend()
+
+    async def upload(
+        self, *, tenant_id: uuid.UUID, owner_type: str, owner_id: uuid.UUID, filename: str, content_type: str | None,
+        content: bytes, actor_user_id: uuid.UUID, actor_role: str, actor_permissions: frozenset[str],
+    ) -> DocumentSummary:
+        required_permission = _WRITE_PERMISSION_BY_OWNER_TYPE.get(owner_type)
+        if required_permission is None:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"Unsupported owner_type '{owner_type}'")
+        if required_permission not in actor_permissions:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, f"Missing required permission: {required_permission}")
+
+        async with tenant_session(tenant_id) as session:
+            await _validate_owner_reference(session, tenant_id=tenant_id, owner_type=owner_type, owner_id=owner_id)
+
+            storage_key = f"{tenant_id}/{owner_type}/{owner_id}/{uuid.uuid4()}-{filename}"
+            await self._storage.save(key=storage_key, content=content)
+
+            document = await DocumentRepository(session).create(
+                tenant_id=tenant_id, owner_type=owner_type, owner_id=owner_id, storage_key=storage_key,
+                original_filename=filename, mime_type=content_type, file_size_bytes=len(content), uploaded_by=actor_user_id,
+            )
+            summary = _to_summary(document)
+            await record_audit(
+                session, tenant_id=tenant_id, actor_user_id=actor_user_id, actor_role=actor_role,
+                action="document.upload", entity_type="document", entity_id=document.id, before=None, after=summary.model_dump(mode="json"),
+            )
+            return summary
+
+    async def _get_authorized(
+        self, session, *, tenant_id: uuid.UUID, document_id: uuid.UUID, actor_user_id: uuid.UUID, actor_role: str, actor_permissions: frozenset[str],
+    ) -> Document:
+        document = await DocumentRepository(session).get_by_id(document_id)
+        if document is None or document.owner_type not in _READ_PERMISSION_BY_OWNER_TYPE:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Document not found")
+
+        required_permission = _READ_PERMISSION_BY_OWNER_TYPE[document.owner_type]
+        if required_permission is not None and required_permission not in actor_permissions:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, f"Missing required permission: {required_permission}")
+
+        if not await _row_scope_allows(session, owner_type=document.owner_type, owner_id=document.owner_id, actor_user_id=actor_user_id, actor_role=actor_role):
+            # Existence-hiding for a row-scope mismatch, same pattern
+            # AppointmentService/EmrService already use for "wrong owner."
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Document not found")
+        return document
+
+    async def get_document(
+        self, *, tenant_id: uuid.UUID, document_id: uuid.UUID, actor_user_id: uuid.UUID, actor_role: str, actor_permissions: frozenset[str],
+    ) -> DocumentSummary:
+        async with tenant_session(tenant_id) as session:
+            document = await self._get_authorized(session, tenant_id=tenant_id, document_id=document_id, actor_user_id=actor_user_id, actor_role=actor_role, actor_permissions=actor_permissions)
+            return _to_summary(document)
+
+    async def get_document_content(
+        self, *, tenant_id: uuid.UUID, document_id: uuid.UUID, actor_user_id: uuid.UUID, actor_role: str, actor_permissions: frozenset[str],
+    ) -> tuple[bytes, Document]:
+        async with tenant_session(tenant_id) as session:
+            document = await self._get_authorized(session, tenant_id=tenant_id, document_id=document_id, actor_user_id=actor_user_id, actor_role=actor_role, actor_permissions=actor_permissions)
+        try:
+            content = await self._storage.read(key=document.storage_key)
+        except FileNotFoundError:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Stored file is missing") from None
+        return content, document
+
+    async def search_documents(
+        self, *, tenant_id: uuid.UUID, owner_type: str, owner_id: uuid.UUID, actor_user_id: uuid.UUID, actor_role: str,
+        actor_permissions: frozenset[str], limit: int, offset: int,
+    ) -> DocumentListResponse:
+        required_permission = _READ_PERMISSION_BY_OWNER_TYPE.get(owner_type)
+        if owner_type not in _READ_PERMISSION_BY_OWNER_TYPE:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"Unsupported owner_type '{owner_type}'")
+        if required_permission is not None and required_permission not in actor_permissions:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, f"Missing required permission: {required_permission}")
+
+        async with tenant_session(tenant_id) as session:
+            if not await _row_scope_allows(session, owner_type=owner_type, owner_id=owner_id, actor_user_id=actor_user_id, actor_role=actor_role):
+                return DocumentListResponse(items=[], total=0, limit=limit, offset=offset)
+
+            rows, total = await DocumentRepository(session).search(tenant_id=tenant_id, owner_type=owner_type, owner_id=owner_id, limit=limit, offset=offset)
+            return DocumentListResponse(items=[_to_summary(d) for d in rows], total=total, limit=limit, offset=offset)

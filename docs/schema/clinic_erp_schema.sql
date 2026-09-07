@@ -1071,20 +1071,35 @@ CREATE TABLE audit_logs (
 CREATE INDEX ix_audit_entity ON audit_logs (tenant_id, entity_type, entity_id);
 CREATE INDEX ix_audit_actor ON audit_logs (tenant_id, actor_user_id, created_at);
 
--- Polymorphic file index (PRD §15) — `owner_type` values include PATIENT,
--- LAB_ORDER, PRESCRIPTION, INVOICE, EXPENSE, etc. The actual bytes live in
--- S3-compatible storage at `storage_key`; this row is what makes them
--- discoverable without listing the bucket.
+-- Polymorphic file index (PRD §15) — built by migration 0025 (File
+-- Storage & Uploads). `owner_type` stays free text at the DB level (still
+-- genuinely polymorphic, per this comment's own original framing), but
+-- the application layer (app/modules/files/service.py) only actually
+-- accepts three values so far — `PATIENT_DOCUMENT`, `LAB_REPORT`,
+-- `LETTERHEAD_ASSET` — each dispatched to its own existing module's
+-- permission (`patients.manage_documents`, `lab.enter_results`,
+-- `clinic.manage_settings`) rather than a new permission of its own;
+-- adding a fourth kind is a one-line dict addition there, not a
+-- migration. `original_filename` is a gap-fill this comment's original
+-- sketch never had — without it a download response has no real filename
+-- to hand back to the browser. The actual bytes live wherever
+-- `app/core/storage.py`'s configured `FileStorageBackend` puts them (the
+-- local-filesystem backend under dev; an S3/R2-compatible backend is a
+-- swap-in behind the same interface, not built yet — no bucket/credentials
+-- exist in this environment) at `storage_key`; this row is what makes a
+-- file discoverable and permission-checked without listing the bucket
+-- directly.
 CREATE TABLE documents (
-  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  tenant_id        UUID NOT NULL REFERENCES clinics(id) ON DELETE CASCADE,
-  owner_type       text NOT NULL,
-  owner_id         UUID NOT NULL,
-  storage_key      text NOT NULL,
-  mime_type        text,
-  file_size_bytes  bigint,
-  uploaded_by      UUID REFERENCES users(id),
-  created_at       timestamptz NOT NULL DEFAULT now()
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id         UUID NOT NULL REFERENCES clinics(id) ON DELETE CASCADE,
+  owner_type        text NOT NULL,
+  owner_id          UUID NOT NULL,
+  storage_key       text NOT NULL,
+  original_filename text NOT NULL,
+  mime_type         text,
+  file_size_bytes   bigint,
+  uploaded_by       UUID REFERENCES users(id),
+  created_at        timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX ix_documents_owner ON documents (tenant_id, owner_type, owner_id);
 
@@ -1092,12 +1107,15 @@ CREATE INDEX ix_documents_owner ON documents (tenant_id, owner_type, owner_id);
 -- reports, scans, X-rays) surfaced in the Patient EMR timeline — added
 -- while building that module (migration 0016), by direct instruction:
 -- real FKs to patients/encounters instead of a polymorphic owner_type/
--- owner_id pair. `documents` above remains reserved for the generic case
--- (invoice PDFs, expense receipts, ...) once a Documents module needs it —
--- the two are not meant to be unified without a fresh product decision.
--- `storage_key` is a metadata pointer only (S3 key or external URL); no
--- object-storage infrastructure exists in this backend to actually hold
--- the bytes.
+-- owner_id pair. `documents` above remains the generic case (letterhead
+-- assets, lab report attachments keyed by lab_order rather than patient,
+-- ...) — the two were NOT unified when `documents` was finally built
+-- (migration 0025); that remains a considered decision, not an oversight.
+-- `storage_key` here is still a metadata pointer only (S3 key or external
+-- URL) — `medical_documents` itself was not migrated to go through the
+-- new `app/core/storage.py` backend; a caller uploads via `POST
+-- /api/v1/files/upload` (owner_type=PATIENT_DOCUMENT) first and passes the
+-- resulting document's id/URL into this table's own `storage_key` field.
 CREATE TYPE medical_document_type AS ENUM ('LAB_REPORT','SCAN','XRAY','OTHER');
 
 CREATE TABLE medical_documents (

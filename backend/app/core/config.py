@@ -26,6 +26,14 @@ class Settings(BaseSettings):
 
     cors_origins: list[str] = ["http://localhost:3000"]
 
+    # File storage (§15) — "local" writes to disk under file_storage_local_dir,
+    # for dev/self-hosted use; an "s3" backend can be added later behind the
+    # same FileStorageBackend interface (app/core/storage.py) without any
+    # caller change. No S3/R2 credentials exist in this environment yet, so
+    # only "local" is actually implemented.
+    file_storage_backend: str = "local"
+    file_storage_local_dir: str = "./var/uploads"
+
     @property
     def is_production(self) -> bool:
         return self.environment == "production"

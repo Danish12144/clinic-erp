@@ -9,6 +9,7 @@ from app.modules.auth.models import (
     OtpCode,
     Permission,
     PermissionOverride,
+    Role,
     RolePermission,
     StaffInvite,
     User,
@@ -102,6 +103,111 @@ class PermissionRepository:
             (effective.add if granted else effective.discard)(code)
 
         return sorted(effective)
+
+    async def get_by_code(self, code: str) -> Permission | None:
+        result = await self._session.execute(select(Permission).where(Permission.code == code))
+        return result.scalar_one_or_none()
+
+
+class RoleRepository:
+    """System-defined roles only (PRD §2's 8 roles) — global reference
+    data, not tenant-scoped, same as `Permission` itself."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def get_by_code(self, code: str) -> Role | None:
+        result = await self._session.execute(select(Role).where(Role.code == code))
+        return result.scalar_one_or_none()
+
+
+class PermissionOverrideRepository:
+    """The write side of PRD §13's two-layer RBAC resolution —
+    `PermissionRepository.resolve_effective_permissions` is the read side.
+    Exactly one of `role_id`/`user_id` is ever set per row (DB `CHECK`
+    already enforces this; the service layer never needs to)."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def get_for_role(self, *, tenant_id: uuid.UUID, role_id: uuid.UUID, permission_id: uuid.UUID) -> PermissionOverride | None:
+        result = await self._session.execute(
+            select(PermissionOverride).where(
+                PermissionOverride.tenant_id == tenant_id, PermissionOverride.role_id == role_id, PermissionOverride.permission_id == permission_id,
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def get_for_user(self, *, tenant_id: uuid.UUID, user_id: uuid.UUID, permission_id: uuid.UUID) -> PermissionOverride | None:
+        result = await self._session.execute(
+            select(PermissionOverride).where(
+                PermissionOverride.tenant_id == tenant_id, PermissionOverride.user_id == user_id, PermissionOverride.permission_id == permission_id,
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def get_by_id(self, override_id: uuid.UUID) -> PermissionOverride | None:
+        result = await self._session.execute(select(PermissionOverride).where(PermissionOverride.id == override_id))
+        return result.scalar_one_or_none()
+
+    async def upsert_for_role(
+        self, *, tenant_id: uuid.UUID, role_id: uuid.UUID, permission_id: uuid.UUID, granted: bool, created_by: uuid.UUID,
+    ) -> PermissionOverride:
+        existing = await self.get_for_role(tenant_id=tenant_id, role_id=role_id, permission_id=permission_id)
+        if existing is not None:
+            existing.granted = granted
+            existing.updated_at = datetime.now(timezone.utc)
+            await self._session.flush()
+            return existing
+        override = PermissionOverride(tenant_id=tenant_id, role_id=role_id, permission_id=permission_id, granted=granted, created_by=created_by)
+        self._session.add(override)
+        await self._session.flush()
+        return override
+
+    async def upsert_for_user(
+        self, *, tenant_id: uuid.UUID, user_id: uuid.UUID, permission_id: uuid.UUID, granted: bool, created_by: uuid.UUID,
+    ) -> PermissionOverride:
+        existing = await self.get_for_user(tenant_id=tenant_id, user_id=user_id, permission_id=permission_id)
+        if existing is not None:
+            existing.granted = granted
+            existing.updated_at = datetime.now(timezone.utc)
+            await self._session.flush()
+            return existing
+        override = PermissionOverride(tenant_id=tenant_id, user_id=user_id, permission_id=permission_id, granted=granted, created_by=created_by)
+        self._session.add(override)
+        await self._session.flush()
+        return override
+
+    async def search(
+        self, *, tenant_id: uuid.UUID, role_id: uuid.UUID | None, user_id: uuid.UUID | None, limit: int, offset: int,
+    ) -> tuple[list[tuple[PermissionOverride, str | None, str]], int]:
+        """Returns `(override, role_code_or_None, permission_code)` triples
+        — a listing (unlike the single-override write response) has no
+        request payload to source the human-readable codes from, so this
+        joins `roles`/`permissions` rather than making the caller resolve
+        each row's `role_id`/`permission_id` itself."""
+        filters = [PermissionOverride.tenant_id == tenant_id]
+        if role_id:
+            filters.append(PermissionOverride.role_id == role_id)
+        if user_id:
+            filters.append(PermissionOverride.user_id == user_id)
+
+        count_result = await self._session.execute(select(func.count()).select_from(PermissionOverride).where(*filters))
+        total = count_result.scalar_one()
+
+        page_result = await self._session.execute(
+            select(PermissionOverride, Role.code, Permission.code)
+            .outerjoin(Role, Role.id == PermissionOverride.role_id)
+            .join(Permission, Permission.id == PermissionOverride.permission_id)
+            .where(*filters)
+            .order_by(PermissionOverride.created_at.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        return [(row[0], row[1], row[2]) for row in page_result.all()], total
+
+    async def delete(self, override_id: uuid.UUID) -> None:
+        await self._session.execute(delete(PermissionOverride).where(PermissionOverride.id == override_id))
 
 
 class OtpRepository:
