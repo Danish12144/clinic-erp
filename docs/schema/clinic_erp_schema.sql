@@ -104,7 +104,15 @@ CREATE TYPE lab_result_flag       AS ENUM ('NORMAL','LOW','HIGH','CRITICAL');
 CREATE TYPE invoice_status        AS ENUM ('DRAFT','ISSUED','PARTIALLY_PAID','PAID','VOID');
 CREATE TYPE invoice_line_source   AS ENUM ('CONSULTATION','PROCEDURE','PHARMACY','LAB','OTHER');
 CREATE TYPE payment_method        AS ENUM ('CASH','CARD','UPI','NET_BANKING','INSURANCE','OTHER');
-CREATE TYPE lead_stage            AS ENUM ('NEW','CONTACTED','QUALIFIED','CONVERTED','LOST');
+-- `lead_stage` (NEW/CONTACTED/QUALIFIED/CONVERTED/LOST) used to be sketched
+-- here — removed. It was only ever a doc-only placeholder (no migration
+-- before 0023 ever created `leads` at all), and migration 0023 built
+-- `leads.status` against a fresh `lead_status` enum instead (declared
+-- inline near the `leads` table in Section 12, same "declared near point
+-- of use" precedent as `expense_category`) with a genuinely different
+-- value set (`APPOINTMENT_SCHEDULED` instead of `QUALIFIED`) — keeping
+-- this stale, unreferenced type here would misleadingly suggest something
+-- still uses it.
 -- SENT/CONFIRMED/OVERDUE replace the simpler DONE, by direct instruction —
 -- see migration 0019's docstring. OVERDUE has no scheduler to transition
 -- rows into it; it's computed lazily, swept on every read.
@@ -892,23 +900,63 @@ CREATE INDEX ix_inventory_txn_item ON inventory_transactions (item_id, created_a
 -- =============================================================================
 
 -- Deliberately distinct from `patients` — not every inquiry becomes a
--- registered patient (PRD §20). Still design-only — the CRM & Follow-ups
--- module (migration 0019) built only the clinical-follow-up half below;
--- no code path creates or reads a `leads` row yet, so `communication_logs.
--- lead_id` (below) has no FK to it yet either.
+-- registered patient (PRD §20). The CRM & Follow-ups module (migration
+-- 0019) deliberately built only the clinical-follow-up half of PRD §20 and
+-- left this table unbuilt; the Lead Pipeline / CRM Funnel module
+-- (migration 0023) finally builds it, to a fresh field list rather than
+-- this section's earlier sketch, all by direct instruction: `source`
+-- becomes a real `lead_source` enum instead of free text; `status` is a
+-- wholly new `lead_status` enum (NOT a reuse of the old `lead_stage`
+-- sketch that used to sit in Section 2 — see the removal note there;
+-- `APPOINTMENT_SCHEDULED` replaces `QUALIFIED` in this task's own
+-- vocabulary); `name` becomes `first_name`/
+-- `last_name`, matching every other person-shaped entity in this schema;
+-- the assignment column is named `assigned_to_user_id`, not `assigned_to`.
+-- `communication_logs.lead_id` (below) still has no FK to this table —
+-- Leads never writes to `communication_logs` (a lead interaction is a
+-- pure outreach-activity note, not an outbound-message-delivery record;
+-- see `lead_interactions` below), so nothing has needed that FK yet.
+CREATE TYPE lead_source AS ENUM ('GOOGLE_AD','WALK_IN','WEBSITE','REFERRAL','SOCIAL');
+CREATE TYPE lead_status AS ENUM ('NEW','CONTACTED','APPOINTMENT_SCHEDULED','CONVERTED','LOST');
+
 CREATE TABLE leads (
-  id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  tenant_id           UUID NOT NULL REFERENCES clinics(id) ON DELETE CASCADE,
-  name                text NOT NULL,
-  phone               text,
-  email               text,
-  source              text,
-  stage               lead_stage NOT NULL DEFAULT 'NEW',
-  assigned_to         UUID REFERENCES users(id),
+  id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id            UUID NOT NULL REFERENCES clinics(id) ON DELETE CASCADE,
+  first_name           text NOT NULL,
+  last_name            text,
+  phone                text,
+  email                text,
+  source               lead_source,
+  status               lead_status NOT NULL DEFAULT 'NEW',
+  assigned_to_user_id  UUID REFERENCES users(id),
+  notes                text,
   converted_patient_id UUID REFERENCES patients(id),
-  created_at          timestamptz NOT NULL DEFAULT now(),
-  updated_at          timestamptz NOT NULL DEFAULT now()
+  created_at           timestamptz NOT NULL DEFAULT now(),
+  updated_at           timestamptz NOT NULL DEFAULT now()
 );
+CREATE INDEX ix_leads_status ON leads (tenant_id, status);
+CREATE INDEX ix_leads_assigned ON leads (tenant_id, assigned_to_user_id);
+CREATE INDEX ix_leads_created ON leads (tenant_id, created_at);
+
+-- Wholly new table this task asked for, with no master-schema sketch at
+-- all — a pure outreach-activity log ("what happened on this call"), not
+-- a reuse of `communication_logs` (whose job is outbound-message
+-- *delivery* tracking: channel/status/provider_message_id). Insert-only,
+-- no `updated_at`, same convention as `payments`/
+-- `pharmacy_inventory_transactions`/`communication_logs` itself.
+CREATE TYPE lead_interaction_type AS ENUM ('CALL','WHATSAPP','NOTE','EMAIL');
+
+CREATE TABLE lead_interactions (
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id         UUID NOT NULL REFERENCES clinics(id) ON DELETE CASCADE,
+  lead_id           UUID NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+  interaction_type  lead_interaction_type NOT NULL,
+  outcome           text,
+  notes             text,
+  performed_by      UUID NOT NULL REFERENCES users(id),
+  created_at        timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX ix_lead_interactions_lead ON lead_interactions (lead_id, created_at);
 
 -- Still design-only — no `notification_templates` row exists yet; nothing
 -- has needed templated content, only the plain stub `communication_logs`
@@ -1162,7 +1210,7 @@ BEGIN
     'medicine_batches','pharmacy_inventory_transactions','pharmacy_sales','pharmacy_sale_items',
     'prescriptions','prescription_items','lab_test_catalog','lab_orders','lab_results',
     'invoices','invoice_line_items','payments','expenses','inventory_items',
-    'inventory_transactions','leads','follow_ups','notification_templates',
+    'inventory_transactions','leads','lead_interactions','follow_ups','notification_templates',
     'communication_logs','audit_logs','documents','medical_documents','telemedicine_sessions',
     'ai_interaction_logs','abha_links'
   ])
@@ -1240,7 +1288,9 @@ INSERT INTO permissions (code, module, description) VALUES
   ('inventory.record_usage',      'inventory',      'Read general inventory items/alerts and log USAGE transactions only — PURCHASE/ADJUSTMENT/RETURN remain inventory.manage-only'),
   ('expenses.manage',             'finance',        'Record and manage expenses'),
   ('expenses.record',             'finance',        'Record and view expenses (no edit) — petty-cash logging. Receptionist only, a deliberate PRD §3 matrix deviation (matrix says Receptionist "–" on general inventory & expenses)'),
-  ('crm.manage',                  'crm',            'Manage leads and follow-ups'),
+  ('crm.manage',                  'crm',            'Manage clinical follow-ups (not leads — see leads.manage/leads.view, migration 0023, kept deliberately separate)'),
+  ('leads.manage',                'crm',            'Full CRUD on leads, log interactions, and convert a lead to a patient — Owner/Receptionist'),
+  ('leads.view',                  'crm',            'Read-only access to leads and their interaction history — Doctor'),
   ('communications.send',         'communications', 'Send patient/lead communications'),
   ('dashboard.view',              'analytics',      'View owner dashboard, analytics, and reports'),
   ('dashboard.view_own',          'analytics',      'View own revenue/consultation analytics - Doctor only, row-scoped'),
@@ -1263,7 +1313,7 @@ SELECT r.id, p.id FROM roles r, permissions p WHERE (r.code, p.code) IN (
   ('OWNER','billing.manage'),
   ('OWNER','payments.record'), ('OWNER','pharmacy.manage_catalog'), ('OWNER','pharmacy.view_catalog'), ('OWNER','pharmacy.dispense'),
   ('OWNER','lab.manage_catalog'), ('OWNER','lab.order'), ('OWNER','lab.enter_results'), ('OWNER','lab.view_results'),
-  ('OWNER','inventory.manage'), ('OWNER','expenses.manage'), ('OWNER','crm.manage'),
+  ('OWNER','inventory.manage'), ('OWNER','expenses.manage'), ('OWNER','crm.manage'), ('OWNER','leads.manage'),
   ('OWNER','communications.send'), ('OWNER','dashboard.view'), ('OWNER','audit.view'),
   ('OWNER','branches.manage'),
 
@@ -1274,7 +1324,7 @@ SELECT r.id, p.id FROM roles r, permissions p WHERE (r.code, p.code) IN (
   ('DOCTOR','consultation.manage'), ('DOCTOR','consultation.view'),
   ('DOCTOR','prescription.manage'), ('DOCTOR','prescription.view'), ('DOCTOR','dashboard.view_own'),
   ('DOCTOR','lab.order'), ('DOCTOR','lab.view_results'), ('DOCTOR','billing.view_own'), ('DOCTOR','pharmacy.view_catalog'), ('DOCTOR','crm.manage'),
-  ('DOCTOR','inventory.view'),
+  ('DOCTOR','inventory.view'), ('DOCTOR','leads.view'),
 
   ('RECEPTIONIST','patients.register'), ('RECEPTIONIST','patients.view_demographics'),
   ('RECEPTIONIST','appointments.manage'), ('RECEPTIONIST','appointments.view'),
@@ -1283,7 +1333,7 @@ SELECT r.id, p.id FROM roles r, permissions p WHERE (r.code, p.code) IN (
   ('RECEPTIONIST','billing.manage'),
   ('RECEPTIONIST','payments.record'), ('RECEPTIONIST','crm.manage'),
   ('RECEPTIONIST','communications.send'), ('RECEPTIONIST','expenses.record'), ('RECEPTIONIST','pharmacy.sell_otc'),
-  ('RECEPTIONIST','inventory.record_usage'),
+  ('RECEPTIONIST','inventory.record_usage'), ('RECEPTIONIST','leads.manage'),
 
   ('NURSE','patients.view_demographics'), ('NURSE','vitals.record'), ('NURSE','vitals.view'),
   ('NURSE','checkin.view'), ('NURSE','queue.view'),
