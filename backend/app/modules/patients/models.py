@@ -38,6 +38,13 @@ class Patient(Base):
     chronic_conditions: Mapped[list[str]] = mapped_column(ARRAY(String), nullable=False, server_default=text("'{}'"))
     emergency_contact: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     address: Mapped[str | None] = mapped_column(String, nullable=True)
+    # ABHA/ABDM preparedness (migration 0027) — deliberately lightweight,
+    # not the master schema's fuller reserved `AbhaLink` table; see that
+    # migration's own docstring. Writing a non-null value here is gated by
+    # the `features.abdm_enabled` TenantSetting at the service layer, not
+    # by anything at this model/DB level.
+    abha_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    abha_address: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

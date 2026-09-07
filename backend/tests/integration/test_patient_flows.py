@@ -247,3 +247,65 @@ async def test_patient_without_a_linked_record_gets_404_on_me(api_client: AsyncC
     headers, _ = await login_as(role_code="PATIENT")
     response = await api_client.get("/api/v1/patients/me", headers=headers)
     assert response.status_code == 404
+
+
+# ---- ABHA/ABDM preparedness ---------------------------------------------------------
+
+
+async def _enable_abdm(api_client: AsyncClient, owner_headers: dict[str, str]) -> None:
+    response = await api_client.put("/api/v1/clinics/me/settings/features.abdm_enabled", json={"value": True}, headers=owner_headers)
+    assert response.status_code == 200
+
+
+async def test_creating_a_patient_with_abha_fields_is_rejected_when_abdm_disabled(api_client: AsyncClient, owner_headers) -> None:
+    response = await api_client.post(
+        "/api/v1/patients", json={"first_name": "NoAbdm", "phone": "+919876500101", "abha_id": "12-3456-7890-1234"}, headers=owner_headers
+    )
+    assert response.status_code == 422
+
+
+async def test_creating_a_patient_without_abha_fields_succeeds_regardless_of_the_flag(api_client: AsyncClient, owner_headers) -> None:
+    response = await api_client.post("/api/v1/patients", json={"first_name": "PlainPatient", "phone": "+919876500102"}, headers=owner_headers)
+    assert response.status_code == 201
+    assert response.json()["patient"]["abha_id"] is None
+    assert response.json()["patient"]["abha_address"] is None
+
+
+async def test_creating_a_patient_with_abha_fields_succeeds_once_abdm_is_enabled(api_client: AsyncClient, owner_headers) -> None:
+    await _enable_abdm(api_client, owner_headers)
+    response = await api_client.post(
+        "/api/v1/patients",
+        json={"first_name": "AbdmPatient", "phone": "+919876500103", "abha_id": "12-3456-7890-1234", "abha_address": "abdmpatient@abdm"},
+        headers=owner_headers,
+    )
+    assert response.status_code == 201
+    body = response.json()["patient"]
+    assert body["abha_id"] == "12-3456-7890-1234"
+    assert body["abha_address"] == "abdmpatient@abdm"
+
+
+async def test_updating_abha_fields_is_rejected_when_abdm_disabled(api_client: AsyncClient, owner_headers) -> None:
+    created = await api_client.post("/api/v1/patients", json={"first_name": "UpdateNoAbdm", "phone": "+919876500104"}, headers=owner_headers)
+    patient_id = created.json()["patient"]["id"]
+
+    response = await api_client.patch(f"/api/v1/patients/{patient_id}", json={"abha_address": "updatenoabdm@abdm"}, headers=owner_headers)
+    assert response.status_code == 422
+
+
+async def test_updating_abha_fields_succeeds_once_abdm_is_enabled(api_client: AsyncClient, owner_headers) -> None:
+    await _enable_abdm(api_client, owner_headers)
+    created = await api_client.post("/api/v1/patients", json={"first_name": "UpdateAbdm", "phone": "+919876500105"}, headers=owner_headers)
+    patient_id = created.json()["patient"]["id"]
+
+    response = await api_client.patch(f"/api/v1/patients/{patient_id}", json={"abha_address": "updateabdm@abdm"}, headers=owner_headers)
+    assert response.status_code == 200
+    assert response.json()["abha_address"] == "updateabdm@abdm"
+
+
+async def test_updating_unrelated_fields_succeeds_regardless_of_the_abdm_flag(api_client: AsyncClient, owner_headers) -> None:
+    created = await api_client.post("/api/v1/patients", json={"first_name": "UnrelatedUpdate", "phone": "+919876500106"}, headers=owner_headers)
+    patient_id = created.json()["patient"]["id"]
+
+    response = await api_client.patch(f"/api/v1/patients/{patient_id}", json={"address": "12 Main St"}, headers=owner_headers)
+    assert response.status_code == 200
+    assert response.json()["address"] == "12 Main St"

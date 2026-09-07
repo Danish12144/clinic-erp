@@ -111,6 +111,21 @@ class PaymentSummary(BaseModel):
     recorded_at: datetime
 
 
+class PaymentOrderResponse(BaseModel):
+    """A simulated gateway order/intent (§17) — not a `Payment`. The
+    actual payment is still only ever recorded via
+    `POST /api/v1/billing/payments` once it's confirmed (today: a staff
+    member keys it in after collecting it; a real gateway integration
+    would instead confirm it via webhook)."""
+
+    invoice_id: uuid.UUID
+    order_id: str
+    amount: Decimal
+    currency: str
+    provider: str
+    status: str
+
+
 class InvoiceSummary(BaseModel):
     id: uuid.UUID
     tenant_id: uuid.UUID

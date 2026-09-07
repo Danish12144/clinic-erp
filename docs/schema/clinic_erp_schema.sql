@@ -385,6 +385,16 @@ CREATE TABLE patients (
   chronic_conditions text[] NOT NULL DEFAULT '{}',
   emergency_contact  jsonb,
   address            text,
+  -- ABHA/ABDM preparedness (migration 0027) — deliberately lighter than
+  -- PRD-ARCHITECTURE.md §6's reserved `AbhaLink` sketch (patient_id,
+  -- abha_id, linked_at, consent_artifact_ref — never actually written into
+  -- this DDL file, only narrated in the PRD's own "Future" section): two
+  -- plain nullable columns here, no consent-artifact/link-history
+  -- tracking. Writing a non-null value is gated by the
+  -- `features.abdm_enabled` TenantSetting at the service layer, not by
+  -- anything here.
+  abha_id            text,
+  abha_address       text,
   created_at         timestamptz NOT NULL DEFAULT now(),
   updated_at         timestamptz NOT NULL DEFAULT now(),
   deleted_at         timestamptz,
@@ -1309,7 +1319,7 @@ INSERT INTO permissions (code, module, description) VALUES
   ('consultation.manage',         'clinical',      'Create/edit consultation, diagnosis, clinical notes'),
   ('consultation.view',           'clinical',      'View consultations/clinical notes — Doctor scoped to own, Owner/Nurse tenant-wide'),
   ('prescription.manage',         'clinical',      'Issue e-prescriptions'),
-  ('prescription.view',           'clinical',      'View prescriptions — Doctor scoped to own, Owner/Nurse tenant-wide'),
+  ('prescription.view',           'clinical',      'View prescriptions — Doctor scoped to own, Owner/Nurse tenant-wide, Patient scoped to their own encounters (migration 0026)'),
   ('billing.manage',              'billing',       'Create/edit invoices'),
   ('billing.view_own',            'billing',       'Patient views own invoices'),
   ('payments.record',             'billing',       'Record payments against an invoice'),
@@ -1386,7 +1396,7 @@ SELECT r.id, p.id FROM roles r, permissions p WHERE (r.code, p.code) IN (
 
   ('OTHER_STAFF','inventory.record_usage'),
 
-  ('PATIENT','appointments.book_own'), ('PATIENT','billing.view_own'), ('PATIENT','doctors.view_directory'), ('PATIENT','patients.view_emr'), ('PATIENT','lab.view_results')
+  ('PATIENT','appointments.book_own'), ('PATIENT','billing.view_own'), ('PATIENT','doctors.view_directory'), ('PATIENT','patients.view_emr'), ('PATIENT','lab.view_results'), ('PATIENT','prescription.view')
 );
 
 -- Placeholder plan catalog — expect this to be replaced once the

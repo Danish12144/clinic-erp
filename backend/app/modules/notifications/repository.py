@@ -65,10 +65,12 @@ class CommunicationLogRepository:
     async def create(
         self, *, tenant_id: uuid.UUID, patient_id: uuid.UUID | None, channel: CommChannel, status: CommStatus,
         template_id: uuid.UUID | None = None, rendered_body: str | None = None,
+        provider_message_id: str | None = None, sent_at: datetime | None = None,
     ) -> CommunicationLog:
         log = CommunicationLog(
             tenant_id=tenant_id, patient_id=patient_id, channel=channel, status=status,
             template_id=template_id, rendered_body=rendered_body,
+            provider_message_id=provider_message_id, sent_at=sent_at,
         )
         self._session.add(log)
         await self._session.flush()

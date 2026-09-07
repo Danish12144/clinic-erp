@@ -25,6 +25,7 @@ from fastapi import HTTPException, status
 from app.core.db import tenant_session
 from app.modules.audit.service import record as record_audit
 from app.modules.billing.models import Invoice, InvoiceStatus, PaymentMethod
+from app.modules.billing.payment_gateway import get_payment_gateway_adapter
 from app.modules.billing.repository import InvoiceRepository, PaymentRepository
 from app.modules.billing.schemas import (
     AutoGenerateInvoiceRequest,
@@ -38,6 +39,7 @@ from app.modules.billing.schemas import (
     InvoiceVoidRequest,
     PaymentCreateRequest,
     PaymentListResponse,
+    PaymentOrderResponse,
     PaymentSummary,
 )
 from app.modules.checkin.repository import EncounterRepository
@@ -395,3 +397,33 @@ class PaymentService:
         async with tenant_session(tenant_id) as session:
             rows, total = await PaymentRepository(session).search(tenant_id=tenant_id, invoice_id=invoice_id, limit=limit, offset=offset)
             return PaymentListResponse(items=[PaymentSummary.model_validate(p) for p in rows], total=total, limit=limit, offset=offset)
+
+    async def create_payment_order(self, *, tenant_id: uuid.UUID, invoice_id: uuid.UUID, actor_user_id: uuid.UUID, actor_role: str) -> PaymentOrderResponse:
+        """The "hand the frontend something to redirect/open a checkout
+        with" half of an online-payment flow (§17) — simulated via
+        `MockPaymentGatewayAdapter`, see app/modules/billing/payment_gateway.py.
+        Does not create a `Payment` row; recording that money was actually
+        received still only happens via `record_payment` above, exactly as
+        it does for a manual cash/card/UPI payment today."""
+        async with tenant_session(tenant_id) as session:
+            invoice = await InvoiceRepository(session).get_by_id(invoice_id)
+            if invoice is None:
+                raise HTTPException(status.HTTP_404_NOT_FOUND, "Invoice not found")
+            if invoice.status not in (InvoiceStatus.ISSUED, InvoiceStatus.PARTIALLY_PAID):
+                raise HTTPException(status.HTTP_409_CONFLICT, f"Cannot create a payment order for an invoice with status {invoice.status.value}")
+
+            total_paid = sum((p.amount for p in invoice.payments), Decimal("0.00"))
+            balance_due = Decimal(invoice.total) - total_paid
+            if balance_due <= 0:
+                raise HTTPException(status.HTTP_409_CONFLICT, "This invoice has no balance due")
+
+            order = await get_payment_gateway_adapter().create_order(amount=balance_due, currency="INR", receipt=str(invoice.id))
+            response = PaymentOrderResponse(
+                invoice_id=invoice.id, order_id=order.order_id, amount=order.amount, currency=order.currency,
+                provider=order.provider, status=order.status,
+            )
+            await record_audit(
+                session, tenant_id=tenant_id, actor_user_id=actor_user_id, actor_role=actor_role,
+                action="payment_order.create", entity_type="invoice", entity_id=invoice.id, before=None, after=response.model_dump(mode="json"),
+            )
+            return response

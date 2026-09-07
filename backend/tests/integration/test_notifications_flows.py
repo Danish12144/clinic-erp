@@ -5,11 +5,15 @@ against a real Postgres. See tests/conftest.py (skipped automatically if
 unreachable).
 """
 
+import uuid
 from datetime import date, timedelta
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import update
 
+from app.core.db import tenant_session
+from app.modules.patients.models import Patient
 from app.modules.tenancy.models import Clinic
 
 pytestmark = pytest.mark.usefixtures("require_db")
@@ -179,10 +183,52 @@ async def test_booking_an_appointment_queues_a_notification_with_default_body(ap
     assert logs.status_code == 200
     entries = logs.json()["items"]
     assert len(entries) == 1
-    assert entries[0]["status"] == "QUEUED"
+    # SENT, not QUEUED — the patient has a phone, so ConsoleChannelAdapter
+    # (the only implemented channel adapter) simulates a successful send.
+    assert entries[0]["status"] == "SENT"
     assert entries[0]["channel"] == "WHATSAPP"
     assert "Alice" in entries[0]["rendered_body"]
     assert entries[0]["template_id"] is None  # no clinic override exists yet — built-in default was used
+
+
+async def test_dispatch_calls_the_channel_adapter_and_records_a_provider_message_id(api_client: AsyncClient, owner_headers: dict[str, str], test_clinic: Clinic) -> None:
+    branch_id = await _create_branch(api_client, owner_headers, "AdapterBranch")
+    doctor_id, _ = await _create_active_doctor(api_client, owner_headers, test_clinic, phone="+919877000020")
+    patient_id = await _create_patient(api_client, owner_headers, phone="+919877000021", first_name="Grace")
+
+    booked = await api_client.post(
+        "/api/v1/appointments", json={"patient_id": patient_id, "branch_id": branch_id, "doctor_id": doctor_id, "scheduled_at": "2026-09-18T10:00:00+00:00"},
+        headers=owner_headers,
+    )
+    assert booked.status_code == 201
+
+    logs = await api_client.get(f"/api/v1/notifications/logs?patient_id={patient_id}", headers=owner_headers)
+    entry = logs.json()["items"][0]
+    assert entry["status"] == "SENT"
+    assert entry["provider_message_id"] is not None
+    assert entry["provider_message_id"].startswith("console-")
+    assert entry["sent_at"] is not None
+
+
+async def test_dispatch_fails_gracefully_when_patient_has_no_phone(api_client: AsyncClient, owner_headers: dict[str, str], test_clinic: Clinic) -> None:
+    branch_id = await _create_branch(api_client, owner_headers, "NoPhoneBranch")
+    doctor_id, _ = await _create_active_doctor(api_client, owner_headers, test_clinic, phone="+919877000022")
+    patient_id = await _create_patient(api_client, owner_headers, phone="+919877000023", first_name="Henry")
+    # Remove the phone after creation so the dispatcher has no recipient —
+    # the surrounding booking must still succeed.
+    async with tenant_session(test_clinic.id) as session:
+        await session.execute(update(Patient).where(Patient.id == uuid.UUID(patient_id)).values(phone=None))
+
+    booked = await api_client.post(
+        "/api/v1/appointments", json={"patient_id": patient_id, "branch_id": branch_id, "doctor_id": doctor_id, "scheduled_at": "2026-09-19T10:00:00+00:00"},
+        headers=owner_headers,
+    )
+    assert booked.status_code == 201  # booking succeeds regardless of dispatch outcome
+
+    logs = await api_client.get(f"/api/v1/notifications/logs?patient_id={patient_id}", headers=owner_headers)
+    entry = logs.json()["items"][0]
+    assert entry["status"] == "FAILED"
+    assert entry["provider_message_id"] is None
 
 
 async def test_a_clinic_configured_template_overrides_the_default_body(api_client: AsyncClient, owner_headers: dict[str, str], test_clinic: Clinic) -> None:
@@ -294,5 +340,7 @@ async def test_logs_filter_by_channel_and_status(api_client: AsyncClient, owner_
     by_wrong_channel = await api_client.get("/api/v1/notifications/logs?channel=EMAIL", headers=owner_headers)
     assert all(entry["patient_id"] != patient_id for entry in by_wrong_channel.json()["items"])
 
-    by_status = await api_client.get("/api/v1/notifications/logs?status=QUEUED", headers=owner_headers)
+    # SENT, not QUEUED — the patient has a phone, so ConsoleChannelAdapter
+    # simulates a successful send.
+    by_status = await api_client.get("/api/v1/notifications/logs?status=SENT", headers=owner_headers)
     assert any(entry["patient_id"] == patient_id for entry in by_status.json()["items"])

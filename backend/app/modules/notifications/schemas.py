@@ -97,6 +97,7 @@ class CommunicationLogSummary(BaseModel):
     template_id: uuid.UUID | None
     rendered_body: str | None
     status: CommStatus
+    provider_message_id: str | None
     sent_at: datetime | None
     created_at: datetime
 

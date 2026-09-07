@@ -33,6 +33,7 @@ from app.modules.billing.schemas import (
     InvoiceVoidRequest,
     PaymentCreateRequest,
     PaymentListResponse,
+    PaymentOrderResponse,
     PaymentSummary,
 )
 from app.modules.billing.service import BillingService, PaymentService
@@ -166,6 +167,19 @@ async def void_invoice(
     service: BillingService = Depends(get_billing_service),
 ) -> InvoiceSummary:
     return await service.void_invoice(tenant_id=current_user.tenant_id, invoice_id=invoice_id, payload=payload, actor_user_id=current_user.user_id, actor_role=current_user.role_code)
+
+
+@invoice_router.post("/{invoice_id}/create-payment-order", response_model=PaymentOrderResponse, status_code=status.HTTP_201_CREATED)
+async def create_payment_order(
+    invoice_id: uuid.UUID,
+    current_user: CurrentUser = Depends(require_permission("payments.record")),
+    service: PaymentService = Depends(get_payment_service),
+) -> PaymentOrderResponse:
+    """Simulated gateway order/intent (§17) — see
+    app/modules/billing/payment_gateway.py. Gated by `payments.record`,
+    the same permission that gates actually recording a payment, since
+    this is the first step of the same capability."""
+    return await service.create_payment_order(tenant_id=current_user.tenant_id, invoice_id=invoice_id, actor_user_id=current_user.user_id, actor_role=current_user.role_code)
 
 
 # ---- Payments -----------------------------------------------------------------

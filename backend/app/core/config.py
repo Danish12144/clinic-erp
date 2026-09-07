@@ -34,6 +34,19 @@ class Settings(BaseSettings):
     file_storage_backend: str = "local"
     file_storage_local_dir: str = "./var/uploads"
 
+    # Notification channel adapters (§16) — "console" (default) logs the
+    # message and simulates success, no real send. Swap to a real provider
+    # later purely via config; see app/modules/notifications/adapters.py.
+    sms_provider: str = "console"
+    whatsapp_provider: str = "console"
+    email_provider: str = "console"
+
+    # Payment gateway adapter (§17) — "mock" (default) simulates a gateway
+    # order/intent with no real payment created. Swap to "razorpay"/
+    # "cashfree" later purely via config; see
+    # app/modules/billing/payment_gateway.py.
+    payment_gateway_provider: str = "mock"
+
     @property
     def is_production(self) -> bool:
         return self.environment == "production"

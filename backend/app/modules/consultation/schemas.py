@@ -114,6 +114,8 @@ class PrescriptionSummary(BaseModel):
     issued_at: datetime
     created_at: datetime
     items: list[PrescriptionItemSummary]
+    pdf_document_id: uuid.UUID | None = None
+    pdf_download_url: str | None = Field(None, description="GET this URL (via /api/v1/files/{id}/content) to download the rendered PDF")
 
 
 class PrescriptionListResponse(BaseModel):

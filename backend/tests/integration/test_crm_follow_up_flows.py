@@ -54,7 +54,9 @@ async def test_receptionist_can_schedule_a_follow_up(api_client: AsyncClient, ow
     body = response.json()
     assert body["status"] == "PENDING"
     assert body["reason"] == "Suture removal"
-    assert body["reminder"]["status"] == "QUEUED"
+    # SENT, not QUEUED — the patient has a phone, so ConsoleChannelAdapter
+    # (the only implemented channel adapter) simulates a successful send.
+    assert body["reminder"]["status"] == "SENT"
     assert body["reminder"]["channel"] == "WHATSAPP"
 
 

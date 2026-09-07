@@ -4,9 +4,14 @@ issue/supersede a prescription, the letterhead-driven print view) against a
 real Postgres — see tests/conftest.py (skipped automatically if unreachable).
 """
 
+import uuid
+
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import update
 
+from app.core.db import tenant_session
+from app.modules.patients.models import Patient
 from app.modules.tenancy.models import Clinic
 
 pytestmark = pytest.mark.usefixtures("require_db")
@@ -348,3 +353,110 @@ async def test_prescription_print_view_physical_omits_header_and_uses_margins(ap
     assert body["letterhead"]["header"] is None
     assert body["letterhead"]["footer"] is None
     assert body["letterhead"]["top_margin_mm"] == 40.0
+
+
+# ---- Prescription PDF (File Storage integration) --------------------------------------
+
+
+async def _link_patient_to_user(test_clinic: Clinic, *, patient_id: str, user_id: uuid.UUID) -> None:
+    async with tenant_session(test_clinic.id) as session:
+        await session.execute(update(Patient).where(Patient.id == uuid.UUID(patient_id)).values(user_id=user_id))
+
+
+async def test_issuing_a_prescription_generates_a_downloadable_pdf(api_client: AsyncClient, owner_headers: dict[str, str], test_clinic: Clinic) -> None:
+    branch_id = await _create_branch(api_client, owner_headers, "PdfBranch", address="1 PDF Ave", phone="+911100000000")
+    doctor_id, doctor_headers = await _create_active_doctor(api_client, owner_headers, test_clinic, phone="+919877100001")
+    patient_id = await _create_patient(api_client, owner_headers, phone="+919877100002")
+    encounter_id = await _register_walk_in(api_client, owner_headers, patient_id=patient_id, branch_id=branch_id, doctor_id=doctor_id)
+    await _start_consultation(api_client, doctor_headers, encounter_id=encounter_id)
+
+    created = await api_client.post("/api/v1/prescriptions", json={"encounter_id": encounter_id, "items": [_one_item()]}, headers=doctor_headers)
+    assert created.status_code == 201
+    body = created.json()
+    assert body["pdf_document_id"] is not None
+    assert body["pdf_download_url"] == f"/api/v1/files/{body['pdf_document_id']}/content"
+
+    content = await api_client.get(body["pdf_download_url"], headers=doctor_headers)
+    assert content.status_code == 200
+    assert content.headers["content-type"] == "application/pdf"
+    assert content.content.startswith(b"%PDF")
+
+
+async def test_get_prescription_includes_the_pdf_link(api_client: AsyncClient, owner_headers: dict[str, str], test_clinic: Clinic) -> None:
+    branch_id = await _create_branch(api_client, owner_headers, "PdfGetBranch")
+    patient_id = await _create_patient(api_client, owner_headers, phone="+919877100003")
+    encounter_id = await _register_walk_in(api_client, owner_headers, patient_id=patient_id, branch_id=branch_id)
+    await _start_consultation(api_client, owner_headers, encounter_id=encounter_id)
+    created = await api_client.post("/api/v1/prescriptions", json={"encounter_id": encounter_id, "items": [_one_item()]}, headers=owner_headers)
+    prescription_id = created.json()["id"]
+
+    fetched = await api_client.get(f"/api/v1/prescriptions/{prescription_id}", headers=owner_headers)
+    assert fetched.status_code == 200
+    assert fetched.json()["pdf_document_id"] == created.json()["pdf_document_id"]
+
+
+async def test_superseding_a_prescription_generates_a_distinct_new_pdf(api_client: AsyncClient, owner_headers: dict[str, str], test_clinic: Clinic) -> None:
+    branch_id = await _create_branch(api_client, owner_headers, "SupersedePdfBranch")
+    patient_id = await _create_patient(api_client, owner_headers, phone="+919877100004")
+    encounter_id = await _register_walk_in(api_client, owner_headers, patient_id=patient_id, branch_id=branch_id)
+    await _start_consultation(api_client, owner_headers, encounter_id=encounter_id)
+    original = await api_client.post("/api/v1/prescriptions", json={"encounter_id": encounter_id, "items": [_one_item()]}, headers=owner_headers)
+    original_id = original.json()["id"]
+
+    superseded = await api_client.post(f"/api/v1/prescriptions/{original_id}/supersede", json={"encounter_id": encounter_id, "items": [_one_item(dosage="2 tab")]}, headers=owner_headers)
+    assert superseded.status_code == 201
+    assert superseded.json()["pdf_document_id"] != original.json()["pdf_document_id"]
+
+    # The original's own PDF is untouched — still resolvable independently.
+    original_refetched = await api_client.get(f"/api/v1/prescriptions/{original_id}", headers=owner_headers)
+    assert original_refetched.json()["pdf_document_id"] == original.json()["pdf_document_id"]
+
+
+async def test_patient_can_view_and_download_their_own_prescription_pdf(api_client: AsyncClient, owner_headers: dict[str, str], test_clinic: Clinic, login_as) -> None:
+    branch_id = await _create_branch(api_client, owner_headers, "PatientPdfBranch")
+    patient_id = await _create_patient(api_client, owner_headers, phone="+919877100005")
+    encounter_id = await _register_walk_in(api_client, owner_headers, patient_id=patient_id, branch_id=branch_id)
+    await _start_consultation(api_client, owner_headers, encounter_id=encounter_id)
+    created = await api_client.post("/api/v1/prescriptions", json={"encounter_id": encounter_id, "items": [_one_item()]}, headers=owner_headers)
+    body = created.json()
+
+    patient_headers, patient_user_id = await login_as(role_code="PATIENT")
+    await _link_patient_to_user(test_clinic, patient_id=patient_id, user_id=patient_user_id)
+
+    fetched = await api_client.get(f"/api/v1/prescriptions/{body['id']}", headers=patient_headers)
+    assert fetched.status_code == 200
+    content = await api_client.get(body["pdf_download_url"], headers=patient_headers)
+    assert content.status_code == 200
+    assert content.content.startswith(b"%PDF")
+
+
+async def test_patient_cannot_view_or_download_another_patients_prescription(api_client: AsyncClient, owner_headers: dict[str, str], test_clinic: Clinic, login_as) -> None:
+    branch_id = await _create_branch(api_client, owner_headers, "OtherPatientPdfBranch")
+    patient_a_id = await _create_patient(api_client, owner_headers, phone="+919877100006")
+    patient_b_id = await _create_patient(api_client, owner_headers, phone="+919877100007")
+    encounter_a = await _register_walk_in(api_client, owner_headers, patient_id=patient_a_id, branch_id=branch_id)
+    await _start_consultation(api_client, owner_headers, encounter_id=encounter_a)
+    created = await api_client.post("/api/v1/prescriptions", json={"encounter_id": encounter_a, "items": [_one_item()]}, headers=owner_headers)
+    body = created.json()
+
+    patient_b_headers, patient_b_user_id = await login_as(role_code="PATIENT")
+    await _link_patient_to_user(test_clinic, patient_id=patient_b_id, user_id=patient_b_user_id)
+
+    fetched = await api_client.get(f"/api/v1/prescriptions/{body['id']}", headers=patient_b_headers)
+    assert fetched.status_code == 404
+    content = await api_client.get(body["pdf_download_url"], headers=patient_b_headers)
+    assert content.status_code == 404
+
+
+async def test_doctor_who_does_not_own_the_prescription_cannot_download_its_pdf(api_client: AsyncClient, owner_headers: dict[str, str], test_clinic: Clinic) -> None:
+    branch_id = await _create_branch(api_client, owner_headers, "OtherDoctorPdfBranch")
+    doctor_a_id, doctor_a_headers = await _create_active_doctor(api_client, owner_headers, test_clinic, phone="+919877100008")
+    _, doctor_b_headers = await _create_active_doctor(api_client, owner_headers, test_clinic, phone="+919877100009")
+    patient_id = await _create_patient(api_client, owner_headers, phone="+919877100010")
+    encounter_id = await _register_walk_in(api_client, owner_headers, patient_id=patient_id, branch_id=branch_id, doctor_id=doctor_a_id)
+    await _start_consultation(api_client, doctor_a_headers, encounter_id=encounter_id)
+    created = await api_client.post("/api/v1/prescriptions", json={"encounter_id": encounter_id, "items": [_one_item()]}, headers=doctor_a_headers)
+    body = created.json()
+
+    content = await api_client.get(body["pdf_download_url"], headers=doctor_b_headers)
+    assert content.status_code == 404

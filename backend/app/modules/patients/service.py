@@ -10,6 +10,14 @@ invoices...), there is nothing to reassign during a merge; it would
 degenerate to "delete one of the two rows," which soft-delete already
 covers. Revisit once a module exists whose records would need
 reassigning between two patient ids.
+
+`_ensure_abdm_enabled_if_needed` (migration 0027) gates *writing* a
+non-null `abha_id`/`abha_address` on the `features.abdm_enabled`
+TenantSetting — "small clinics keep it off with zero clutter" is enforced
+here, not just left as a frontend-side hint. Reading these fields back
+(`PatientSummary`) is never gated by the flag — a clinic that turns ABDM
+off after having set values for some patients still sees them, it just
+can't set new ones until re-enabled.
 """
 
 import uuid
@@ -27,8 +35,21 @@ from app.modules.patients.schemas import (
     PatientSummary,
     PatientUpdateRequest,
 )
+from app.modules.tenancy.repository import TenantSettingRepository
 
 _MAX_MRN_GENERATION_ATTEMPTS = 5
+_ABDM_FEATURE_KEY = "features.abdm_enabled"
+
+
+async def _ensure_abdm_enabled_if_needed(session, *, tenant_id: uuid.UUID, abha_id: str | None, abha_address: str | None) -> None:
+    if abha_id is None and abha_address is None:
+        return
+    setting = await TenantSettingRepository(session).get_by_key(tenant_id=tenant_id, key=_ABDM_FEATURE_KEY)
+    if not (setting is not None and bool(setting.value)):
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            f"ABDM is not enabled for this clinic — enable '{_ABDM_FEATURE_KEY}' in clinic settings before setting abha_id/abha_address",
+        )
 
 
 class PatientService:
@@ -56,6 +77,7 @@ class PatientService:
 
         for _ in range(attempts):
             async with tenant_session(tenant_id) as session:
+                await _ensure_abdm_enabled_if_needed(session, tenant_id=tenant_id, abha_id=payload.abha_id, abha_address=payload.abha_address)
                 repo = PatientRepository(session)
                 mrn = explicit_mrn or await repo.next_mrn_candidate(tenant_id=tenant_id)
                 try:
@@ -134,6 +156,7 @@ class PatientService:
     ) -> PatientSummary:
         changes = payload.model_dump(exclude_unset=True)
         async with tenant_session(tenant_id) as session:
+            await _ensure_abdm_enabled_if_needed(session, tenant_id=tenant_id, abha_id=changes.get("abha_id"), abha_address=changes.get("abha_address"))
             repo = PatientRepository(session)
             patient = await repo.get_by_id(patient_id)
             if patient is None:

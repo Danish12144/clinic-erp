@@ -73,6 +73,8 @@ class PatientCreateRequest(BaseModel):
     chronic_conditions: list[str] = Field(default_factory=list)
     emergency_contact: EmergencyContact | None = None
     address: str | None = Field(None, max_length=500)
+    abha_id: str | None = Field(None, max_length=20, description="14-digit ABHA number — requires features.abdm_enabled for this clinic")
+    abha_address: str | None = Field(None, max_length=100, description='ABHA address, e.g. "name@abdm" — requires features.abdm_enabled for this clinic')
 
     @field_validator("mrn")
     @classmethod
@@ -124,6 +126,8 @@ class PatientUpdateRequest(BaseModel):
     chronic_conditions: list[str] | None = None
     emergency_contact: EmergencyContact | None = None
     address: str | None = Field(None, max_length=500)
+    abha_id: str | None = Field(None, max_length=20)
+    abha_address: str | None = Field(None, max_length=100)
 
     @field_validator("phone")
     @classmethod
@@ -169,6 +173,8 @@ class PatientSummary(BaseModel):
     chronic_conditions: list[str]
     emergency_contact: dict | None
     address: str | None
+    abha_id: str | None
+    abha_address: str | None
     created_at: datetime
     updated_at: datetime
 

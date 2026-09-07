@@ -377,3 +377,82 @@ async def test_doctor_cannot_view_an_invoice_for_someone_elses_consultation(api_
 async def test_get_nonexistent_invoice_is_404(api_client: AsyncClient, owner_headers: dict[str, str]) -> None:
     response = await api_client.get("/api/v1/billing/invoices/00000000-0000-0000-0000-000000000000", headers=owner_headers)
     assert response.status_code == 404
+
+
+# ---- Payment gateway stub (create-payment-order) -------------------------------------
+
+
+async def test_create_payment_order_returns_a_simulated_order_for_the_balance_due(api_client: AsyncClient, owner_headers: dict[str, str]) -> None:
+    branch_id = await _create_branch(api_client, owner_headers, "OrderBranch")
+    patient_id = await _create_patient(api_client, owner_headers, phone="+919878000030")
+    invoice = await _create_draft_invoice(api_client, owner_headers, branch_id=branch_id, patient_id=patient_id, items=[_one_item(quantity=1, unit_price=1000)])
+    invoice_id = invoice["id"]
+    await api_client.post(f"/api/v1/billing/invoices/{invoice_id}/issue", headers=owner_headers)
+
+    response = await api_client.post(f"/api/v1/billing/invoices/{invoice_id}/create-payment-order", headers=owner_headers)
+    assert response.status_code == 201
+    body = response.json()
+    assert body["invoice_id"] == invoice_id
+    assert body["amount"] == "1000.00"
+    assert body["currency"] == "INR"
+    assert body["provider"] == "mock"
+    assert body["status"] == "created"
+    assert body["order_id"].startswith("mock_order_")
+
+    # Purely a simulated order — no Payment was actually recorded.
+    fetched = await api_client.get(f"/api/v1/billing/invoices/{invoice_id}", headers=owner_headers)
+    assert fetched.json()["status"] == "ISSUED"
+    assert fetched.json()["total_paid"] == "0.00"
+
+
+async def test_create_payment_order_reflects_the_remaining_balance_after_a_partial_payment(api_client: AsyncClient, owner_headers: dict[str, str]) -> None:
+    branch_id = await _create_branch(api_client, owner_headers, "PartialOrderBranch")
+    patient_id = await _create_patient(api_client, owner_headers, phone="+919878000031")
+    invoice = await _create_draft_invoice(api_client, owner_headers, branch_id=branch_id, patient_id=patient_id, items=[_one_item(quantity=1, unit_price=1000)])
+    invoice_id = invoice["id"]
+    await api_client.post(f"/api/v1/billing/invoices/{invoice_id}/issue", headers=owner_headers)
+    await api_client.post("/api/v1/billing/payments", json={"invoice_id": invoice_id, "amount": 400, "method": "CASH"}, headers=owner_headers)
+
+    response = await api_client.post(f"/api/v1/billing/invoices/{invoice_id}/create-payment-order", headers=owner_headers)
+    assert response.status_code == 201
+    assert response.json()["amount"] == "600.00"
+
+
+async def test_create_payment_order_for_a_draft_invoice_is_rejected(api_client: AsyncClient, owner_headers: dict[str, str]) -> None:
+    branch_id = await _create_branch(api_client, owner_headers, "DraftOrderBranch")
+    patient_id = await _create_patient(api_client, owner_headers, phone="+919878000032")
+    invoice = await _create_draft_invoice(api_client, owner_headers, branch_id=branch_id, patient_id=patient_id)
+
+    response = await api_client.post(f"/api/v1/billing/invoices/{invoice['id']}/create-payment-order", headers=owner_headers)
+    assert response.status_code == 409
+
+
+async def test_create_payment_order_for_a_fully_paid_invoice_is_rejected(api_client: AsyncClient, owner_headers: dict[str, str]) -> None:
+    branch_id = await _create_branch(api_client, owner_headers, "PaidOrderBranch")
+    patient_id = await _create_patient(api_client, owner_headers, phone="+919878000033")
+    invoice = await _create_draft_invoice(api_client, owner_headers, branch_id=branch_id, patient_id=patient_id, items=[_one_item(quantity=1, unit_price=500)])
+    invoice_id = invoice["id"]
+    await api_client.post(f"/api/v1/billing/invoices/{invoice_id}/issue", headers=owner_headers)
+    await api_client.post("/api/v1/billing/payments", json={"invoice_id": invoice_id, "amount": 500, "method": "CASH"}, headers=owner_headers)
+
+    response = await api_client.post(f"/api/v1/billing/invoices/{invoice_id}/create-payment-order", headers=owner_headers)
+    assert response.status_code == 409
+
+
+async def test_create_payment_order_for_a_nonexistent_invoice_is_404(api_client: AsyncClient, owner_headers: dict[str, str]) -> None:
+    response = await api_client.post("/api/v1/billing/invoices/00000000-0000-0000-0000-000000000000/create-payment-order", headers=owner_headers)
+    assert response.status_code == 404
+
+
+async def test_doctor_cannot_create_a_payment_order(api_client: AsyncClient, owner_headers: dict[str, str], test_clinic: Clinic) -> None:
+    branch_id = await _create_branch(api_client, owner_headers, "NoOrderPermBranch")
+    doctor_id, doctor_headers = await _create_active_doctor(api_client, owner_headers, test_clinic, phone="+919878000034")
+    patient_id = await _create_patient(api_client, owner_headers, phone="+919878000035")
+    encounter_id = await _register_walk_in(api_client, owner_headers, patient_id=patient_id, branch_id=branch_id, doctor_id=doctor_id)
+    await _start_consultation(api_client, doctor_headers, encounter_id=encounter_id)
+    generated = await api_client.post("/api/v1/billing/invoices/auto-generate", json={"encounter_id": encounter_id}, headers=owner_headers)
+    invoice_id = generated.json()["id"]
+    await api_client.post(f"/api/v1/billing/invoices/{invoice_id}/issue", headers=owner_headers)
+
+    response = await api_client.post(f"/api/v1/billing/invoices/{invoice_id}/create-payment-order", headers=doctor_headers)
+    assert response.status_code == 403

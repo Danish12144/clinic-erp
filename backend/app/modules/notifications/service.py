@@ -15,20 +15,31 @@ trigger yet, it falls back to a small built-in default body per key
 and, when `patient_id` is given, `patient_name` — callers only need to
 supply the business-specific placeholders (`appointment_time`, `amount`,
 `test_name`, ...). Exactly one `CommunicationLog` row is inserted per
-call, `status=QUEUED` — still the same "stubbed outbox, no real
-SMS/WhatsApp/Email provider" state every dispatch in this backend has
-been in since Follow-ups first introduced the table (migration 0019).
+call. `status` now reflects a real (if mocked) send attempt via
+`app/modules/notifications/adapters.py::get_channel_adapter` — every
+adapter today resolves to `ConsoleChannelAdapter` (logs and simulates
+`SENT`), so this is still not production delivery, but the plumbing this
+module's own docstring used to describe as entirely absent ("no real
+SMS/WhatsApp/Email provider") now exists end to end; only the provider
+implementation itself is a placeholder. The recipient contact
+(`patient.phone` for SMS/WhatsApp, `patient.email` for Email) is resolved
+from the same `Patient` row already fetched for `patient_name` — if
+there's no `patient_id`, or the patient has no contact detail for the
+channel, the send is skipped and logged as `FAILED` rather than raising
+(the surrounding business action — booking, payment, etc. — must not fail
+just because a notification couldn't be sent).
 """
 
 import re
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import HTTPException, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import tenant_session
+from app.modules.notifications.adapters import get_channel_adapter
 from app.modules.notifications.models import CommChannel, CommStatus, CommunicationLog, NotificationTemplate
 from app.modules.notifications.repository import CommunicationLogRepository, NotificationTemplateRepository
 from app.modules.notifications.schemas import (
@@ -69,6 +80,16 @@ def render_body(body_text: str, context: dict[str, str]) -> str:
     return _PLACEHOLDER_PATTERN.sub(lambda m: context.get(m.group(1), f"[{m.group(1)}]"), body_text)
 
 
+def _recipient_for_channel(patient, channel: CommChannel) -> str | None:
+    if patient is None:
+        return None
+    if channel in (CommChannel.SMS, CommChannel.WHATSAPP):
+        return patient.phone
+    if channel == CommChannel.EMAIL:
+        return patient.email
+    return None  # PUSH: no device-token concept exists in this backend
+
+
 async def dispatch_notification(
     session: AsyncSession, *, tenant_id: uuid.UUID, template_key: str, channel: CommChannel,
     patient_id: uuid.UUID | None, context: dict[str, str],
@@ -76,19 +97,29 @@ async def dispatch_notification(
     enriched_context = dict(context)
     clinic = await ClinicRepository(session).get_by_id(tenant_id)
     enriched_context.setdefault("clinic_name", clinic.name if clinic is not None else "")
-    if patient_id is not None:
-        patient = await PatientRepository(session).get_by_id(patient_id)
-        if patient is not None:
-            full_name = f"{patient.first_name} {patient.last_name}".strip() if patient.last_name else patient.first_name
-            enriched_context.setdefault("patient_name", full_name)
+
+    patient = await PatientRepository(session).get_by_id(patient_id) if patient_id is not None else None
+    if patient is not None:
+        full_name = f"{patient.first_name} {patient.last_name}".strip() if patient.last_name else patient.first_name
+        enriched_context.setdefault("patient_name", full_name)
 
     template = await NotificationTemplateRepository(session).get_active(tenant_id=tenant_id, channel=channel, template_key=template_key)
     body_text = template.body_text if template is not None else _DEFAULT_TEMPLATE_BODIES.get(template_key, "")
     rendered_body = render_body(body_text, enriched_context)
 
+    recipient = _recipient_for_channel(patient, channel)
+    if recipient is None:
+        result_status, provider_message_id, sent_at = CommStatus.FAILED, None, None
+    else:
+        result = await get_channel_adapter(channel).send(recipient=recipient, body=rendered_body)
+        result_status = result.status
+        provider_message_id = result.provider_message_id
+        sent_at = datetime.now(timezone.utc) if result_status == CommStatus.SENT else None
+
     return await CommunicationLogRepository(session).create(
-        tenant_id=tenant_id, patient_id=patient_id, channel=channel, status=CommStatus.QUEUED,
+        tenant_id=tenant_id, patient_id=patient_id, channel=channel, status=result_status,
         template_id=template.id if template is not None else None, rendered_body=rendered_body,
+        provider_message_id=provider_message_id, sent_at=sent_at,
     )
 
 
