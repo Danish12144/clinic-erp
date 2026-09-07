@@ -3,7 +3,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.modules.crm.models import CommChannel
+from app.modules.notifications.models import CommChannel
 
 
 class FollowUpCreateRequest(BaseModel):

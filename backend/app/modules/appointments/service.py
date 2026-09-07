@@ -29,6 +29,8 @@ from app.modules.appointments.schemas import (
 from app.modules.audit.service import record as record_audit
 from app.modules.auth.models import UserStatus
 from app.modules.doctors.repository import DoctorRepository
+from app.modules.notifications.models import CommChannel
+from app.modules.notifications.service import dispatch_notification
 from app.modules.patients.repository import PatientRepository
 from app.modules.tenancy.repository import BranchRepository
 from app.modules.tenancy.schemas import WorkingHours
@@ -122,6 +124,14 @@ class AppointmentService:
                 entity_id=appointment.id,
                 before=None,
                 after=summary.model_dump(mode="json"),
+            )
+            # Outbox integration (migration 0024) — queues a stubbed
+            # reminder through the shared dispatcher; a clinic-configured
+            # APPOINTMENT_BOOKED template applies if one is active, else a
+            # built-in default body.
+            await dispatch_notification(
+                session, tenant_id=tenant_id, template_key="APPOINTMENT_BOOKED", channel=CommChannel.WHATSAPP,
+                patient_id=patient_id, context={"appointment_time": scheduled_at.isoformat()},
             )
             return summary
 

@@ -14,7 +14,8 @@ from sqlalchemy import select, text
 from app.core.db import platform_admin_session, tenant_session
 from app.core.security import hash_password
 from app.modules.auth.models import User
-from app.modules.crm.models import CommunicationLog, FollowUp
+from app.modules.crm.models import FollowUp
+from app.modules.notifications.models import CommunicationLog
 from app.modules.patients.models import Patient
 from app.modules.tenancy.models import Clinic
 

@@ -43,6 +43,8 @@ from app.modules.billing.schemas import (
 from app.modules.checkin.repository import EncounterRepository
 from app.modules.consultation.repository import ConsultationRepository
 from app.modules.doctors.repository import DoctorRepository
+from app.modules.notifications.models import CommChannel
+from app.modules.notifications.service import dispatch_notification
 from app.modules.patients.repository import PatientRepository
 from app.modules.tenancy.repository import BranchRepository
 
@@ -379,6 +381,13 @@ class PaymentService:
                     session, tenant_id=tenant_id, actor_user_id=actor_user_id, actor_role=actor_role,
                     action="invoice.status_change", entity_type="invoice", entity_id=invoice.id,
                     before={"status": before_status.value}, after={"status": new_status.value},
+                )
+            if payload.amount > 0:
+                # Outbox integration (migration 0024) — a receipt for money
+                # received, not a refund/reversal (payload.amount < 0).
+                await dispatch_notification(
+                    session, tenant_id=tenant_id, template_key="BILL_RECEIPT", channel=CommChannel.WHATSAPP,
+                    patient_id=invoice.patient_id, context={"amount": str(payload.amount)},
                 )
             return summary
 

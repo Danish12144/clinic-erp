@@ -16,6 +16,7 @@ from app.modules.inventory.router import alerts_router as inventory_alerts_route
 from app.modules.lab.router import order_router as lab_order_router, test_router as lab_test_router
 from app.modules.leads.router import router as leads_router
 from app.modules.letterhead.router import router as letterhead_router
+from app.modules.notifications.router import notification_router, template_router as notification_template_router
 from app.modules.patients.router import router as patients_router
 from app.modules.pharmacy.router import medicine_router, pharmacy_router
 from app.modules.reports.router import billing_summary_router, financial_report_router
@@ -64,6 +65,8 @@ app.include_router(expenses_router)
 app.include_router(inventory_items_router)
 app.include_router(inventory_alerts_router)
 app.include_router(leads_router)
+app.include_router(notification_template_router)
+app.include_router(notification_router)
 
 
 @app.get("/health", tags=["health"])

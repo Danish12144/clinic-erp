@@ -36,6 +36,8 @@ from app.modules.lab.schemas import (
     LabTestUpdateRequest,
     ReferenceRangeEntry,
 )
+from app.modules.notifications.models import CommChannel
+from app.modules.notifications.service import dispatch_notification
 from app.modules.patients.repository import PatientRepository
 
 _NON_TERMINAL_STATUSES = (LabOrderStatus.ORDERED, LabOrderStatus.SAMPLE_COLLECTED, LabOrderStatus.RESULTED)
@@ -267,6 +269,11 @@ class LabOrderService:
                 session, tenant_id=tenant_id, actor_user_id=actor_user_id, actor_role=actor_role,
                 action="lab_order.status_change", entity_type="lab_order", entity_id=order.id,
                 before={"status": LabOrderStatus.RESULTED.value}, after={"status": LabOrderStatus.COMPLETED.value},
+            )
+            # Outbox integration (migration 0024).
+            await dispatch_notification(
+                session, tenant_id=tenant_id, template_key="LAB_RESULT_READY", channel=CommChannel.WHATSAPP,
+                patient_id=updated.patient_id, context={"test_name": updated.test.name},
             )
             return _to_order_summary(updated)
 

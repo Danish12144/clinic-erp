@@ -5,18 +5,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.modules.crm.models import CommunicationLog, FollowUp, FollowUpStatus
-
-
-class CommunicationLogRepository:
-    def __init__(self, session: AsyncSession) -> None:
-        self._session = session
-
-    async def create(self, *, tenant_id: uuid.UUID, patient_id: uuid.UUID | None, channel, status) -> CommunicationLog:
-        log = CommunicationLog(tenant_id=tenant_id, patient_id=patient_id, channel=channel, status=status)
-        self._session.add(log)
-        await self._session.flush()
-        return log
+from app.modules.crm.models import FollowUp, FollowUpStatus
 
 
 def _with_relations(query):

@@ -25,8 +25,8 @@ from sqlalchemy import update
 from app.core.db import tenant_session
 from app.modules.audit.service import record as record_audit
 from app.modules.checkin.repository import EncounterRepository
-from app.modules.crm.models import CommStatus, CommunicationLog, FollowUp, FollowUpStatus
-from app.modules.crm.repository import CommunicationLogRepository, FollowUpRepository
+from app.modules.crm.models import FollowUp, FollowUpStatus
+from app.modules.crm.repository import FollowUpRepository
 from app.modules.crm.schemas import (
     CommunicationLogSummary,
     FollowUpCreateRequest,
@@ -35,6 +35,8 @@ from app.modules.crm.schemas import (
     FollowUpSummary,
 )
 from app.modules.doctors.repository import DoctorRepository
+from app.modules.notifications.models import CommStatus, CommunicationLog
+from app.modules.notifications.service import dispatch_notification
 from app.modules.patients.repository import PatientRepository
 
 _ALLOWED_TRANSITIONS: dict[FollowUpStatus, set[FollowUpStatus]] = {
@@ -72,9 +74,13 @@ class FollowUpService:
             if payload.encounter_id is not None and await EncounterRepository(session).get_by_id(payload.encounter_id) is None:
                 raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"Encounter '{payload.encounter_id}' does not exist")
 
-            # Task 3: a stubbed outbox entry — no real SMS/WhatsApp send.
-            reminder = await CommunicationLogRepository(session).create(
-                tenant_id=tenant_id, patient_id=payload.patient_id, channel=payload.channel, status=CommStatus.QUEUED
+            # Routed through the shared outbox dispatcher (migration 0024)
+            # rather than a bare stub insert — a clinic-configured
+            # FOLLOW_UP_REMINDER template now actually applies here too,
+            # not just to Appointments/Billing/Lab's dispatches.
+            reminder = await dispatch_notification(
+                session, tenant_id=tenant_id, template_key="FOLLOW_UP_REMINDER", channel=payload.channel,
+                patient_id=payload.patient_id, context={},
             )
 
             follow_up_repo = FollowUpRepository(session)

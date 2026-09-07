@@ -958,38 +958,58 @@ CREATE TABLE lead_interactions (
 );
 CREATE INDEX ix_lead_interactions_lead ON lead_interactions (lead_id, created_at);
 
--- Still design-only — no `notification_templates` row exists yet; nothing
--- has needed templated content, only the plain stub `communication_logs`
--- row Follow-ups already creates. `communication_logs.template_id` below
--- has no FK to this table yet, same "column reserved, FK deferred"
--- pattern `prescription_items.medicine_id` used before Pharmacy existed.
+-- Built by migration 0024 (Notification Templates & Outbox Integration),
+-- finally fulfilling this table's own design-only sketch. `channel` reuses
+-- the existing `comm_channel` enum rather than a new one — this task's
+-- requested set (SMS/WHATSAPP/EMAIL) is a pure subset. The column is named
+-- `template_key`, not `event_key`, and stays free text (not a closed
+-- enum) — this task's own wording ("e.g. APPOINTMENT_BOOKED, ...") signals
+-- a non-exhaustive, extensible set, same "open string, not a closed enum"
+-- design intent this sketch's own `event_key` comment already had, just
+-- with this task's `UPPER_SNAKE_CASE` casing instead of dot-separated.
+-- `body_text` replaces `body_template` (this task's own literal field
+-- name). `variables` is new — a JSONB array of placeholder names (e.g.
+-- `["patient_name","appointment_time"]`), rendered via `{{name}}`
+-- interpolation in `app/modules/notifications/service.py::render_body`.
 CREATE TABLE notification_templates (
-  id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  tenant_id      UUID NOT NULL REFERENCES clinics(id) ON DELETE CASCADE,
-  channel        comm_channel NOT NULL,
-  event_key      text NOT NULL,   -- e.g. 'appointment.booked', 'lab_result.ready'
-  body_template  text NOT NULL,
-  is_active      boolean NOT NULL DEFAULT true,
-  created_at     timestamptz NOT NULL DEFAULT now(),
-  updated_at     timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (tenant_id, channel, event_key)
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id    UUID NOT NULL REFERENCES clinics(id) ON DELETE CASCADE,
+  template_key text NOT NULL,
+  channel      comm_channel NOT NULL,
+  body_text    text NOT NULL,
+  variables    jsonb NOT NULL DEFAULT '[]'::jsonb,
+  is_active    boolean NOT NULL DEFAULT true,
+  created_at   timestamptz NOT NULL DEFAULT now(),
+  updated_at   timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, channel, template_key)
 );
 
 -- Every outbound (and, later, inbound) patient/lead touchpoint lands here
 -- regardless of trigger (CRM-initiated or system notification) — PRD §20.
--- Built in migration 0019 (CRM & Follow-ups), the first and so far only
--- writer — every follow-up stub-creates exactly one row here (task 3's
--- "stubbed... outbox," `status` never advances past 'QUEUED' since no
--- real SMS/WhatsApp provider is wired in). `lead_id`/`template_id` have no
--- FK yet (see the two notes above) and no `CHECK` requiring one of
--- `patient_id`/`lead_id` — Follow-ups always sets `patient_id`.
+-- Built in migration 0019 (CRM & Follow-ups) as the first writer; migration
+-- 0024 made this table's home `app.modules.notifications.models` (moved
+-- from `app.modules.crm.models`, a pure code move, no column change — same
+-- "relocate once it needs a second caller" precedent `StaffInvite` set)
+-- once every business trigger (Appointments/Billing/Lab/CRM) started
+-- writing here via the shared `dispatch_notification` function, not just
+-- Follow-ups' own stub-insert. `status` still never advances past
+-- `QUEUED` — no real SMS/WhatsApp/Email provider is wired in anywhere in
+-- this backend. Two gap-fills from migration 0024: `rendered_body` (text,
+-- nullable — without it there was no way to see *what message* was
+-- queued, only that one existed; pre-0024 rows have it `NULL`) and
+-- `template_id`'s deferred FK, finally added now that
+-- `notification_templates` exists. `lead_id` still has no FK — Leads
+-- (migration 0023) never writes here (see that table's own note above);
+-- no `CHECK` requires one of `patient_id`/`lead_id` either, since every
+-- current writer always sets `patient_id`.
 CREATE TABLE communication_logs (
   id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   tenant_id          UUID NOT NULL REFERENCES clinics(id) ON DELETE CASCADE,
   patient_id         UUID REFERENCES patients(id),
   lead_id            UUID,
   channel            comm_channel NOT NULL,
-  template_id        UUID,
+  template_id        UUID REFERENCES notification_templates(id),
+  rendered_body      text,
   status             comm_status NOT NULL DEFAULT 'QUEUED',
   provider_message_id text,
   consent_basis      text,   -- DPDP-alignment: why we were allowed to send this
@@ -1292,6 +1312,8 @@ INSERT INTO permissions (code, module, description) VALUES
   ('leads.manage',                'crm',            'Full CRUD on leads, log interactions, and convert a lead to a patient — Owner/Receptionist'),
   ('leads.view',                  'crm',            'Read-only access to leads and their interaction history — Doctor'),
   ('communications.send',         'communications', 'Send patient/lead communications'),
+  ('notifications.manage',        'communications', 'Full CRUD on notification templates, preview rendering, and log inspection — Owner'),
+  ('notifications.view',          'communications', 'Read-only access to notification templates and dispatch logs — Receptionist/Doctor'),
   ('dashboard.view',              'analytics',      'View owner dashboard, analytics, and reports'),
   ('dashboard.view_own',          'analytics',      'View own revenue/consultation analytics - Doctor only, row-scoped'),
   ('audit.view',                  'security',       'View the tenant audit log'),
@@ -1314,7 +1336,7 @@ SELECT r.id, p.id FROM roles r, permissions p WHERE (r.code, p.code) IN (
   ('OWNER','payments.record'), ('OWNER','pharmacy.manage_catalog'), ('OWNER','pharmacy.view_catalog'), ('OWNER','pharmacy.dispense'),
   ('OWNER','lab.manage_catalog'), ('OWNER','lab.order'), ('OWNER','lab.enter_results'), ('OWNER','lab.view_results'),
   ('OWNER','inventory.manage'), ('OWNER','expenses.manage'), ('OWNER','crm.manage'), ('OWNER','leads.manage'),
-  ('OWNER','communications.send'), ('OWNER','dashboard.view'), ('OWNER','audit.view'),
+  ('OWNER','communications.send'), ('OWNER','notifications.manage'), ('OWNER','dashboard.view'), ('OWNER','audit.view'),
   ('OWNER','branches.manage'),
 
   ('DOCTOR','doctor.manage_own_profile'), ('DOCTOR','patients.view_emr'), ('DOCTOR','patients.manage_documents'),
@@ -1324,7 +1346,7 @@ SELECT r.id, p.id FROM roles r, permissions p WHERE (r.code, p.code) IN (
   ('DOCTOR','consultation.manage'), ('DOCTOR','consultation.view'),
   ('DOCTOR','prescription.manage'), ('DOCTOR','prescription.view'), ('DOCTOR','dashboard.view_own'),
   ('DOCTOR','lab.order'), ('DOCTOR','lab.view_results'), ('DOCTOR','billing.view_own'), ('DOCTOR','pharmacy.view_catalog'), ('DOCTOR','crm.manage'),
-  ('DOCTOR','inventory.view'), ('DOCTOR','leads.view'),
+  ('DOCTOR','inventory.view'), ('DOCTOR','leads.view'), ('DOCTOR','notifications.view'),
 
   ('RECEPTIONIST','patients.register'), ('RECEPTIONIST','patients.view_demographics'),
   ('RECEPTIONIST','appointments.manage'), ('RECEPTIONIST','appointments.view'),
@@ -1333,7 +1355,7 @@ SELECT r.id, p.id FROM roles r, permissions p WHERE (r.code, p.code) IN (
   ('RECEPTIONIST','billing.manage'),
   ('RECEPTIONIST','payments.record'), ('RECEPTIONIST','crm.manage'),
   ('RECEPTIONIST','communications.send'), ('RECEPTIONIST','expenses.record'), ('RECEPTIONIST','pharmacy.sell_otc'),
-  ('RECEPTIONIST','inventory.record_usage'), ('RECEPTIONIST','leads.manage'),
+  ('RECEPTIONIST','inventory.record_usage'), ('RECEPTIONIST','leads.manage'), ('RECEPTIONIST','notifications.view'),
 
   ('NURSE','patients.view_demographics'), ('NURSE','vitals.record'), ('NURSE','vitals.view'),
   ('NURSE','checkin.view'), ('NURSE','queue.view'),
