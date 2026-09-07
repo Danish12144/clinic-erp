@@ -11,20 +11,31 @@ compare-and-decrement — safe under concurrency without an explicit
 lock), log a `DISPENSE` transaction per batch drawn from, then bump the
 prescription item's `dispensed_quantity`. Any failure partway rolls back
 the whole thing, since it's all one `tenant_session`.
+
+`checkout_otc_sale` (migration 0021) reuses the exact same FEFO-select /
+atomic-decrement pattern per cart line, logging a `SALE` transaction
+(reserved in `inventory_txn_type` since migration 0017, unused until now)
+instead of `DISPENSE`, and inserting one `PharmacySaleItem` per batch
+allocation instead of bumping a `prescription_items` row — there is no
+prescription or encounter involved at all, by design (counter sale).
 """
 
 import uuid
+from datetime import datetime
+from decimal import Decimal
 
 from fastapi import HTTPException, status
 from sqlalchemy.exc import IntegrityError
 
 from app.core.db import tenant_session
 from app.modules.audit.service import record as record_audit
-from app.modules.pharmacy.models import InventoryTransactionType, Medicine
+from app.modules.billing.models import PaymentMethod
+from app.modules.pharmacy.models import InventoryTransactionType, Medicine, PharmacySale, PharmacySaleStatus
 from app.modules.pharmacy.repository import (
     InventoryTransactionRepository,
     MedicineBatchRepository,
     MedicineRepository,
+    PharmacySaleRepository,
     PrescriptionItemLookupRepository,
 )
 from app.modules.pharmacy.schemas import (
@@ -37,7 +48,11 @@ from app.modules.pharmacy.schemas import (
     MedicineListResponse,
     MedicineSummary,
     MedicineUpdateRequest,
+    OTCSaleCreateRequest,
     ReceiveStockRequest,
+    SaleItemSummary,
+    SaleListResponse,
+    SaleSummary,
 )
 
 
@@ -49,6 +64,15 @@ def _to_medicine_summary(medicine: Medicine, total_stock: int) -> MedicineSummar
         reorder_threshold=medicine.reorder_threshold, is_active=medicine.is_active, total_stock=total_stock,
         is_below_reorder_threshold=total_stock < medicine.reorder_threshold,
         created_at=medicine.created_at, updated_at=medicine.updated_at,
+    )
+
+
+def _to_sale_summary(sale: PharmacySale) -> SaleSummary:
+    return SaleSummary(
+        id=sale.id, tenant_id=sale.tenant_id, customer_name=sale.customer_name, customer_phone=sale.customer_phone,
+        total_amount=sale.total_amount, discount_amount=sale.discount_amount, net_amount=sale.net_amount,
+        payment_mode=sale.payment_mode, status=sale.status, created_by=sale.created_by, created_at=sale.created_at,
+        items=[SaleItemSummary.model_validate(item) for item in sale.items],
     )
 
 
@@ -211,3 +235,87 @@ class PharmacyService:
                 action="pharmacy.dispense", entity_type="prescription_item", entity_id=item.id, before=None, after=result.model_dump(mode="json"),
             )
             return result
+
+    # ---- OTC / Retail sales -----------------------------------------------------
+
+    async def checkout_otc_sale(self, *, tenant_id: uuid.UUID, payload: OTCSaleCreateRequest, actor_user_id: uuid.UUID, actor_role: str) -> SaleSummary:
+        """Same FEFO-select + atomic compare-and-decrement pattern as
+        `dispense_prescription_item`, applied per cart line instead of
+        against a single prescription item — see that method's own
+        docstring for why the decrement is safe without an explicit lock."""
+        async with tenant_session(tenant_id) as session:
+            medicine_repo = MedicineRepository(session)
+            batch_repo = MedicineBatchRepository(session)
+            txn_repo = InventoryTransactionRepository(session)
+            sale_repo = PharmacySaleRepository(session)
+
+            planned: list[tuple[uuid.UUID, uuid.UUID, int, Decimal]] = []  # (medicine_id, batch_id, quantity, unit_price)
+            for cart_item in payload.items:
+                medicine = await medicine_repo.get_by_id(cart_item.medicine_id)
+                if medicine is None or not medicine.is_active:
+                    raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"Medicine '{cart_item.medicine_id}' does not exist or is inactive")
+
+                candidates = await batch_repo.fefo_available_batches(medicine_id=medicine.id)
+                remaining = cart_item.quantity
+                unit_price = Decimal(str(medicine.unit_price))
+                for batch in candidates:
+                    if remaining <= 0:
+                        break
+                    take = min(batch.quantity_on_hand, remaining)
+                    planned.append((medicine.id, batch.id, take, unit_price))
+                    remaining -= take
+                if remaining > 0:
+                    raise HTTPException(status.HTTP_409_CONFLICT, f"Insufficient stock for medicine '{medicine.name}' to fulfil this cart")
+
+            total_amount = sum((unit_price * Decimal(qty) for _, _, qty, unit_price in planned), Decimal("0.00"))
+            net_amount = total_amount - payload.discount_amount
+            if net_amount < 0:
+                raise HTTPException(status.HTTP_409_CONFLICT, "Discount amount exceeds the cart total")
+
+            sale = await sale_repo.create_sale(
+                tenant_id=tenant_id, customer_name=payload.customer_name, customer_phone=payload.customer_phone,
+                total_amount=total_amount, discount_amount=payload.discount_amount, net_amount=net_amount,
+                payment_mode=payload.payment_mode, created_by=actor_user_id,
+            )
+
+            for medicine_id, batch_id, take, unit_price in planned:
+                if not await batch_repo.decrement_stock(batch_id, take):
+                    # Someone else drained this batch between our FEFO read
+                    # and now — fail the whole checkout rather than
+                    # under-fill it silently; the transaction rolls back.
+                    raise HTTPException(status.HTTP_409_CONFLICT, "Stock changed concurrently — please retry the sale")
+                await txn_repo.create(
+                    tenant_id=tenant_id, batch_id=batch_id, type=InventoryTransactionType.SALE, quantity_delta=-take,
+                    reference_type="PHARMACY_SALE", reference_id=sale.id, performed_by=actor_user_id,
+                )
+                await sale_repo.add_item(
+                    tenant_id=tenant_id, sale_id=sale.id, medicine_id=medicine_id, batch_id=batch_id,
+                    quantity=take, unit_price=unit_price, total_price=unit_price * Decimal(take),
+                )
+
+            complete_sale = await sale_repo.get_by_id(sale.id)
+            assert complete_sale is not None
+            summary = _to_sale_summary(complete_sale)
+            await record_audit(
+                session, tenant_id=tenant_id, actor_user_id=actor_user_id, actor_role=actor_role,
+                action="pharmacy_sale.checkout", entity_type="pharmacy_sale", entity_id=sale.id, before=None, after=summary.model_dump(mode="json"),
+            )
+            return summary
+
+    async def get_sale(self, *, tenant_id: uuid.UUID, sale_id: uuid.UUID) -> SaleSummary:
+        async with tenant_session(tenant_id) as session:
+            sale = await PharmacySaleRepository(session).get_by_id(sale_id)
+            if sale is None:
+                raise HTTPException(status.HTTP_404_NOT_FOUND, "Sale not found")
+            return _to_sale_summary(sale)
+
+    async def search_sales(
+        self, *, tenant_id: uuid.UUID, date_from: datetime | None, date_to: datetime | None,
+        payment_mode: PaymentMethod | None, status_filter: PharmacySaleStatus | None, limit: int, offset: int,
+    ) -> SaleListResponse:
+        async with tenant_session(tenant_id) as session:
+            rows, total, total_net_amount = await PharmacySaleRepository(session).search(
+                tenant_id=tenant_id, date_from=date_from, date_to=date_to, payment_mode=payment_mode,
+                status=status_filter, limit=limit, offset=offset,
+            )
+            return SaleListResponse(items=[_to_sale_summary(s) for s in rows], total=total, limit=limit, offset=offset, total_net_amount=total_net_amount)

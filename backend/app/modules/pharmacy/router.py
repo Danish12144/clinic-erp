@@ -7,13 +7,25 @@ PRD-ARCHITECTURE.md §8: `/api/v1/pharmacy/*`.
 "R" on "Pharmacy catalog & inventory"); `pharmacy.dispense` gates the one
 write action Doctor does NOT get (matrix: Doctor "–" on "Pharmacy
 dispensing / POS").
+
+OTC sales routes (migration 0021) are additionally gated by
+`require_feature_flag("features.pharmacy_enabled")` and by
+`require_any_permission("pharmacy.dispense", "pharmacy.sell_otc")` —
+Owner/Pharmacy Staff reach them via their existing `pharmacy.dispense`
+grant, Receptionist via the new Receptionist-only `pharmacy.sell_otc`
+(a direct product-owner deviation from the PRD matrix's "–" for
+Receptionist on the POS row — see migration 0021's docstring). Doctor and
+Nurse hold neither code, so both get a clean 403 on every sales route.
 """
 
 import uuid
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, Query, status
 
-from app.api.deps import CurrentUser, require_permission
+from app.api.deps import CurrentUser, require_any_permission, require_feature_flag, require_permission
+from app.modules.billing.models import PaymentMethod
+from app.modules.pharmacy.models import PharmacySaleStatus
 from app.modules.pharmacy.schemas import (
     DispenseRequest,
     DispenseResult,
@@ -23,9 +35,15 @@ from app.modules.pharmacy.schemas import (
     MedicineListResponse,
     MedicineSummary,
     MedicineUpdateRequest,
+    OTCSaleCreateRequest,
     ReceiveStockRequest,
+    SaleListResponse,
+    SaleSummary,
 )
 from app.modules.pharmacy.service import PharmacyService
+
+_FEATURE_KEY = "features.pharmacy_enabled"
+_SALES_PERMS = ("pharmacy.dispense", "pharmacy.sell_otc")
 
 medicine_router = APIRouter(prefix="/api/v1/pharmacy/medicines", tags=["pharmacy"])
 pharmacy_router = APIRouter(prefix="/api/v1/pharmacy", tags=["pharmacy"])
@@ -123,3 +141,44 @@ async def dispense_prescription_item(
     service: PharmacyService = Depends(get_pharmacy_service),
 ) -> DispenseResult:
     return await service.dispense_prescription_item(tenant_id=current_user.tenant_id, payload=payload, actor_user_id=current_user.user_id, actor_role=current_user.role_code)
+
+
+# ---- OTC / Retail sales -----------------------------------------------------------
+
+
+@pharmacy_router.post("/sales", response_model=SaleSummary, status_code=status.HTTP_201_CREATED)
+async def checkout_otc_sale(
+    payload: OTCSaleCreateRequest,
+    current_user: CurrentUser = Depends(require_any_permission(*_SALES_PERMS)),
+    _feature: CurrentUser = Depends(require_feature_flag(_FEATURE_KEY)),
+    service: PharmacyService = Depends(get_pharmacy_service),
+) -> SaleSummary:
+    return await service.checkout_otc_sale(tenant_id=current_user.tenant_id, payload=payload, actor_user_id=current_user.user_id, actor_role=current_user.role_code)
+
+
+@pharmacy_router.get("/sales", response_model=SaleListResponse)
+async def search_otc_sales(
+    date_from: datetime | None = Query(None),
+    date_to: datetime | None = Query(None),
+    payment_mode: PaymentMethod | None = Query(None),
+    status_filter: PharmacySaleStatus | None = Query(None, alias="status"),
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    current_user: CurrentUser = Depends(require_any_permission(*_SALES_PERMS)),
+    _feature: CurrentUser = Depends(require_feature_flag(_FEATURE_KEY)),
+    service: PharmacyService = Depends(get_pharmacy_service),
+) -> SaleListResponse:
+    return await service.search_sales(
+        tenant_id=current_user.tenant_id, date_from=date_from, date_to=date_to, payment_mode=payment_mode,
+        status_filter=status_filter, limit=limit, offset=offset,
+    )
+
+
+@pharmacy_router.get("/sales/{sale_id}", response_model=SaleSummary)
+async def get_otc_sale(
+    sale_id: uuid.UUID,
+    current_user: CurrentUser = Depends(require_any_permission(*_SALES_PERMS)),
+    _feature: CurrentUser = Depends(require_feature_flag(_FEATURE_KEY)),
+    service: PharmacyService = Depends(get_pharmacy_service),
+) -> SaleSummary:
+    return await service.get_sale(tenant_id=current_user.tenant_id, sale_id=sale_id)

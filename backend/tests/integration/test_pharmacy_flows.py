@@ -4,7 +4,7 @@ item) against a real Postgres — see tests/conftest.py (skipped
 automatically if unreachable).
 """
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 from httpx import AsyncClient
@@ -38,6 +38,11 @@ async def _create_patient(api_client: AsyncClient, owner_headers: dict[str, str]
     created = await api_client.post("/api/v1/patients", json={"first_name": "Pat", "phone": phone}, headers=owner_headers)
     assert created.status_code == 201
     return created.json()["patient"]["id"]
+
+
+async def _enable_pharmacy_feature(api_client: AsyncClient, owner_headers: dict[str, str]) -> None:
+    response = await api_client.put("/api/v1/clinics/me/settings/features.pharmacy_enabled", json={"value": True}, headers=owner_headers)
+    assert response.status_code == 200
 
 
 async def _create_medicine(api_client: AsyncClient, owner_headers: dict[str, str], *, name: str, reorder_threshold: int = 0) -> str:
@@ -283,3 +288,183 @@ async def test_pharmacy_staff_can_dispense(api_client: AsyncClient, owner_header
 async def test_dispense_for_nonexistent_prescription_item_is_404(api_client: AsyncClient, owner_headers: dict[str, str]) -> None:
     response = await api_client.post("/api/v1/pharmacy/dispense", json={"prescription_item_id": "00000000-0000-0000-0000-000000000000", "quantity": 1}, headers=owner_headers)
     assert response.status_code == 404
+
+
+# ---- OTC / Retail sales ------------------------------------------------------------
+
+
+async def test_sales_routes_are_blocked_until_the_feature_flag_is_enabled(api_client: AsyncClient, owner_headers: dict[str, str]) -> None:
+    medicine_id = await _create_medicine(api_client, owner_headers, name="GatedOTC")
+    await _receive_stock(api_client, owner_headers, medicine_id=medicine_id, batch_number="B1", expiry_date=(date.today() + timedelta(days=30)).isoformat(), quantity=10)
+
+    response = await api_client.post(
+        "/api/v1/pharmacy/sales", json={"items": [{"medicine_id": medicine_id, "quantity": 1}], "payment_mode": "CASH"}, headers=owner_headers
+    )
+    assert response.status_code == 403
+
+    await _enable_pharmacy_feature(api_client, owner_headers)
+    response = await api_client.post(
+        "/api/v1/pharmacy/sales", json={"items": [{"medicine_id": medicine_id, "quantity": 1}], "payment_mode": "CASH"}, headers=owner_headers
+    )
+    assert response.status_code == 201
+
+
+async def test_checkout_deducts_stock_fefo_across_batches(api_client: AsyncClient, owner_headers: dict[str, str]) -> None:
+    await _enable_pharmacy_feature(api_client, owner_headers)
+    medicine_id = await _create_medicine(api_client, owner_headers, name="OTC-FEFO")
+    early = await _receive_stock(api_client, owner_headers, medicine_id=medicine_id, batch_number="OTC-EARLY", expiry_date=(date.today() + timedelta(days=10)).isoformat(), quantity=5)
+    late = await _receive_stock(api_client, owner_headers, medicine_id=medicine_id, batch_number="OTC-LATE", expiry_date=(date.today() + timedelta(days=100)).isoformat(), quantity=20)
+
+    response = await api_client.post(
+        "/api/v1/pharmacy/sales",
+        json={"customer_name": "Walk-in Customer", "customer_phone": "+919000000001", "items": [{"medicine_id": medicine_id, "quantity": 8}], "payment_mode": "CASH"},
+        headers=owner_headers,
+    )
+    assert response.status_code == 201
+    body = response.json()
+    assert body["status"] == "PAID"
+    assert len(body["items"]) == 2
+    by_batch = {item["batch_id"]: item["quantity"] for item in body["items"]}
+    assert by_batch[early["id"]] == 5
+    assert by_batch[late["id"]] == 3
+
+    early_refetched = await api_client.get(f"/api/v1/pharmacy/batches/{early['id']}", headers=owner_headers)
+    assert early_refetched.json()["quantity_on_hand"] == 0
+    late_refetched = await api_client.get(f"/api/v1/pharmacy/batches/{late['id']}", headers=owner_headers)
+    assert late_refetched.json()["quantity_on_hand"] == 17
+
+
+async def test_checkout_computes_total_discount_and_net_amount(api_client: AsyncClient, owner_headers: dict[str, str]) -> None:
+    await _enable_pharmacy_feature(api_client, owner_headers)
+    medicine_id = await _create_medicine(api_client, owner_headers, name="OTC-Pricing")
+    await api_client.patch(f"/api/v1/pharmacy/medicines/{medicine_id}", json={"unit_price": 10}, headers=owner_headers)
+    await _receive_stock(api_client, owner_headers, medicine_id=medicine_id, batch_number="B1", expiry_date=(date.today() + timedelta(days=30)).isoformat(), quantity=50)
+
+    response = await api_client.post(
+        "/api/v1/pharmacy/sales",
+        json={"items": [{"medicine_id": medicine_id, "quantity": 4}], "discount_amount": 5, "payment_mode": "UPI"},
+        headers=owner_headers,
+    )
+    assert response.status_code == 201
+    body = response.json()
+    assert body["total_amount"] == "40.00"
+    assert body["discount_amount"] == "5.00"
+    assert body["net_amount"] == "35.00"
+    assert body["payment_mode"] == "UPI"
+
+
+async def test_discount_exceeding_total_is_rejected(api_client: AsyncClient, owner_headers: dict[str, str]) -> None:
+    await _enable_pharmacy_feature(api_client, owner_headers)
+    medicine_id = await _create_medicine(api_client, owner_headers, name="OTC-BigDiscount")
+    await _receive_stock(api_client, owner_headers, medicine_id=medicine_id, batch_number="B1", expiry_date=(date.today() + timedelta(days=30)).isoformat(), quantity=10)
+
+    response = await api_client.post(
+        "/api/v1/pharmacy/sales",
+        json={"items": [{"medicine_id": medicine_id, "quantity": 1}], "discount_amount": 1_000_000, "payment_mode": "CASH"},
+        headers=owner_headers,
+    )
+    assert response.status_code == 409
+
+
+async def test_checkout_with_insufficient_stock_is_rejected(api_client: AsyncClient, owner_headers: dict[str, str]) -> None:
+    await _enable_pharmacy_feature(api_client, owner_headers)
+    medicine_id = await _create_medicine(api_client, owner_headers, name="OTC-LowStock")
+    await _receive_stock(api_client, owner_headers, medicine_id=medicine_id, batch_number="B1", expiry_date=(date.today() + timedelta(days=30)).isoformat(), quantity=2)
+
+    response = await api_client.post(
+        "/api/v1/pharmacy/sales", json={"items": [{"medicine_id": medicine_id, "quantity": 5}], "payment_mode": "CASH"}, headers=owner_headers
+    )
+    assert response.status_code == 409
+
+    unchanged = await api_client.get(f"/api/v1/pharmacy/medicines/{medicine_id}", headers=owner_headers)
+    assert unchanged.json()["total_stock"] == 2
+
+
+async def test_checkout_with_unknown_medicine_is_rejected(api_client: AsyncClient, owner_headers: dict[str, str]) -> None:
+    await _enable_pharmacy_feature(api_client, owner_headers)
+    response = await api_client.post(
+        "/api/v1/pharmacy/sales",
+        json={"items": [{"medicine_id": "00000000-0000-0000-0000-000000000000", "quantity": 1}], "payment_mode": "CASH"},
+        headers=owner_headers,
+    )
+    assert response.status_code == 422
+
+
+async def test_pharmacy_staff_and_receptionist_can_checkout_doctor_and_nurse_cannot(api_client: AsyncClient, owner_headers: dict[str, str], login_as) -> None:
+    await _enable_pharmacy_feature(api_client, owner_headers)
+    medicine_id = await _create_medicine(api_client, owner_headers, name="OTC-RBAC")
+    await _receive_stock(api_client, owner_headers, medicine_id=medicine_id, batch_number="B1", expiry_date=(date.today() + timedelta(days=30)).isoformat(), quantity=100)
+
+    for role in ("PHARMACY_STAFF", "RECEPTIONIST"):
+        headers, _ = await login_as(role_code=role)
+        response = await api_client.post(
+            "/api/v1/pharmacy/sales", json={"items": [{"medicine_id": medicine_id, "quantity": 1}], "payment_mode": "CASH"}, headers=headers
+        )
+        assert response.status_code == 201, role
+        listing = await api_client.get("/api/v1/pharmacy/sales", headers=headers)
+        assert listing.status_code == 200, role
+
+    for role in ("DOCTOR", "NURSE"):
+        headers, _ = await login_as(role_code=role)
+        response = await api_client.post(
+            "/api/v1/pharmacy/sales", json={"items": [{"medicine_id": medicine_id, "quantity": 1}], "payment_mode": "CASH"}, headers=headers
+        )
+        assert response.status_code == 403, role
+        listing = await api_client.get("/api/v1/pharmacy/sales", headers=headers)
+        assert listing.status_code == 403, role
+
+
+async def test_get_sale_returns_a_detailed_bill_breakdown(api_client: AsyncClient, owner_headers: dict[str, str]) -> None:
+    await _enable_pharmacy_feature(api_client, owner_headers)
+    medicine_id = await _create_medicine(api_client, owner_headers, name="OTC-Detail")
+    await _receive_stock(api_client, owner_headers, medicine_id=medicine_id, batch_number="B1", expiry_date=(date.today() + timedelta(days=30)).isoformat(), quantity=10)
+
+    created = await api_client.post(
+        "/api/v1/pharmacy/sales", json={"customer_name": "Jane", "items": [{"medicine_id": medicine_id, "quantity": 3}], "payment_mode": "CARD"}, headers=owner_headers
+    )
+    sale_id = created.json()["id"]
+
+    detail = await api_client.get(f"/api/v1/pharmacy/sales/{sale_id}", headers=owner_headers)
+    assert detail.status_code == 200
+    body = detail.json()
+    assert body["customer_name"] == "Jane"
+    assert body["payment_mode"] == "CARD"
+    assert len(body["items"]) == 1
+    assert body["items"][0]["quantity"] == 3
+    assert body["items"][0]["medicine_id"] == medicine_id
+
+
+async def test_get_nonexistent_sale_is_404(api_client: AsyncClient, owner_headers: dict[str, str]) -> None:
+    await _enable_pharmacy_feature(api_client, owner_headers)
+    response = await api_client.get("/api/v1/pharmacy/sales/00000000-0000-0000-0000-000000000000", headers=owner_headers)
+    assert response.status_code == 404
+
+
+async def test_search_sales_filters_by_date_range_and_payment_mode_with_total_metric(api_client: AsyncClient, owner_headers: dict[str, str]) -> None:
+    await _enable_pharmacy_feature(api_client, owner_headers)
+    medicine_id = await _create_medicine(api_client, owner_headers, name="OTC-Search")
+    await api_client.patch(f"/api/v1/pharmacy/medicines/{medicine_id}", json={"unit_price": 20}, headers=owner_headers)
+    await _receive_stock(api_client, owner_headers, medicine_id=medicine_id, batch_number="B1", expiry_date=(date.today() + timedelta(days=30)).isoformat(), quantity=100)
+
+    cash_sale = await api_client.post(
+        "/api/v1/pharmacy/sales", json={"items": [{"medicine_id": medicine_id, "quantity": 2}], "payment_mode": "CASH"}, headers=owner_headers
+    )
+    assert cash_sale.status_code == 201
+    upi_sale = await api_client.post(
+        "/api/v1/pharmacy/sales", json={"items": [{"medicine_id": medicine_id, "quantity": 3}], "payment_mode": "UPI"}, headers=owner_headers
+    )
+    assert upi_sale.status_code == 201
+
+    cash_only = await api_client.get("/api/v1/pharmacy/sales?payment_mode=CASH", headers=owner_headers)
+    assert cash_only.status_code == 200
+    cash_body = cash_only.json()
+    ids = {s["id"] for s in cash_body["items"]}
+    assert cash_sale.json()["id"] in ids
+    assert upi_sale.json()["id"] not in ids
+    assert cash_body["total_net_amount"] == "40.00"
+
+    future_only = await api_client.get(
+        "/api/v1/pharmacy/sales", params={"date_from": (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()}, headers=owner_headers
+    )
+    assert future_only.status_code == 200
+    assert future_only.json()["total"] == 0

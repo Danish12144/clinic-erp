@@ -4,6 +4,9 @@ from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.modules.billing.models import PaymentMethod
+from app.modules.pharmacy.models import PharmacySaleStatus
+
 
 class MedicineCreateRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=300)
@@ -117,3 +120,56 @@ class DispenseResult(BaseModel):
     quantity_dispensed: int
     prescription_item_dispensed_quantity: int
     allocations: list[DispenseAllocation]
+
+
+# ---- OTC / Retail sales ---------------------------------------------------------
+
+
+class OTCSaleCartItem(BaseModel):
+    medicine_id: uuid.UUID
+    quantity: int = Field(..., ge=1, le=100_000)
+
+
+class OTCSaleCreateRequest(BaseModel):
+    customer_name: str | None = Field(None, max_length=300)
+    customer_phone: str | None = Field(None, max_length=50)
+    items: list[OTCSaleCartItem] = Field(..., min_length=1)
+    discount_amount: Decimal = Field(Decimal("0"), ge=0, max_digits=12, decimal_places=2)
+    payment_mode: PaymentMethod
+
+
+class SaleItemSummary(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    medicine_id: uuid.UUID
+    batch_id: uuid.UUID
+    quantity: int
+    unit_price: Decimal
+    total_price: Decimal
+
+
+class SaleSummary(BaseModel):
+    """The sale row *is* the receipt — no separate bill/invoice entity, see
+    migration 0021's docstring."""
+
+    id: uuid.UUID
+    tenant_id: uuid.UUID
+    customer_name: str | None
+    customer_phone: str | None
+    total_amount: Decimal
+    discount_amount: Decimal
+    net_amount: Decimal
+    payment_mode: PaymentMethod
+    status: PharmacySaleStatus
+    created_by: uuid.UUID
+    created_at: datetime
+    items: list[SaleItemSummary]
+
+
+class SaleListResponse(BaseModel):
+    items: list[SaleSummary]
+    total: int
+    limit: int
+    offset: int
+    total_net_amount: Decimal = Field(..., description="Sum of `net_amount` across every sale matching the current filters, not just this page")

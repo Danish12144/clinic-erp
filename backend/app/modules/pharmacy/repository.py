@@ -4,9 +4,19 @@ from decimal import Decimal
 
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
+from app.modules.billing.models import PaymentMethod
 from app.modules.consultation.models import PrescriptionItem
-from app.modules.pharmacy.models import InventoryTransactionType, Medicine, MedicineBatch, PharmacyInventoryTransaction
+from app.modules.pharmacy.models import (
+    InventoryTransactionType,
+    Medicine,
+    MedicineBatch,
+    PharmacyInventoryTransaction,
+    PharmacySale,
+    PharmacySaleItem,
+    PharmacySaleStatus,
+)
 
 
 class MedicineRepository:
@@ -168,3 +178,70 @@ class InventoryTransactionRepository:
         self._session.add(txn)
         await self._session.flush()
         return txn
+
+
+def _with_items(query):
+    # Same populate_existing=True staleness fix Billing's InvoiceRepository
+    # uses — checkout creates the sale, then inserts items separately, then
+    # this module re-fetches to build the receipt response within the same
+    # session; without it the identity map would skip re-querying `items`.
+    return query.options(selectinload(PharmacySale.items)).execution_options(populate_existing=True)
+
+
+class PharmacySaleRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def create_sale(
+        self, *, tenant_id: uuid.UUID, customer_name: str | None, customer_phone: str | None,
+        total_amount: Decimal, discount_amount: Decimal, net_amount: Decimal, payment_mode: PaymentMethod, created_by: uuid.UUID,
+    ) -> PharmacySale:
+        sale = PharmacySale(
+            tenant_id=tenant_id, customer_name=customer_name, customer_phone=customer_phone,
+            total_amount=total_amount, discount_amount=discount_amount, net_amount=net_amount,
+            payment_mode=payment_mode, created_by=created_by,
+        )
+        self._session.add(sale)
+        await self._session.flush()
+        return sale
+
+    async def add_item(
+        self, *, tenant_id: uuid.UUID, sale_id: uuid.UUID, medicine_id: uuid.UUID, batch_id: uuid.UUID,
+        quantity: int, unit_price: Decimal, total_price: Decimal,
+    ) -> PharmacySaleItem:
+        item = PharmacySaleItem(
+            tenant_id=tenant_id, sale_id=sale_id, medicine_id=medicine_id, batch_id=batch_id,
+            quantity=quantity, unit_price=unit_price, total_price=total_price,
+        )
+        self._session.add(item)
+        await self._session.flush()
+        return item
+
+    async def get_by_id(self, sale_id: uuid.UUID) -> PharmacySale | None:
+        result = await self._session.execute(_with_items(select(PharmacySale).where(PharmacySale.id == sale_id)))
+        return result.unique().scalar_one_or_none()
+
+    async def search(
+        self, *, tenant_id: uuid.UUID, date_from: datetime | None, date_to: datetime | None,
+        payment_mode: PaymentMethod | None, status: PharmacySaleStatus | None, limit: int, offset: int,
+    ) -> tuple[list[PharmacySale], int, Decimal]:
+        filters = [PharmacySale.tenant_id == tenant_id]
+        if date_from:
+            filters.append(PharmacySale.created_at >= date_from)
+        if date_to:
+            filters.append(PharmacySale.created_at <= date_to)
+        if payment_mode:
+            filters.append(PharmacySale.payment_mode == payment_mode)
+        if status:
+            filters.append(PharmacySale.status == status)
+
+        count_result = await self._session.execute(select(func.count()).select_from(PharmacySale).where(*filters))
+        total = count_result.scalar_one()
+
+        sum_result = await self._session.execute(select(func.coalesce(func.sum(PharmacySale.net_amount), 0)).where(*filters))
+        total_net_amount = Decimal(sum_result.scalar_one()).quantize(Decimal("0.01"))
+
+        page_result = await self._session.execute(
+            _with_items(select(PharmacySale).where(*filters).order_by(PharmacySale.created_at.desc()).limit(limit).offset(offset))
+        )
+        return list(page_result.unique().scalars().all()), total, total_net_amount

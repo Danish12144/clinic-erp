@@ -551,24 +551,62 @@ CREATE TABLE pharmacy_inventory_transactions (
 );
 CREATE INDEX ix_pharm_txn_batch ON pharmacy_inventory_transactions (batch_id, created_at);
 
--- `pharmacy_sales` (OTC sales not tied to a prescription, below) remains
--- design-only — the Pharmacy module as actually built (migration 0017)
--- deliberately scoped to catalog + batch inventory + prescription-linked
--- dispensing only, by direct instruction. A future module can add OTC POS
--- without touching anything built so far.
+-- Declared inline near its one table (same "added later, declared near
+-- point of use" precedent as `expense_category`/`medical_document_type`),
+-- rather than back-edited into Section 2's up-front enum block.
+CREATE TYPE pharmacy_sale_status AS ENUM ('PAID','REFUNDED');
 
--- OTC sales not tied to a prescription. `invoice_id` FK is added in
--- Section 10 (after `invoices` exists) to avoid a forward reference.
+-- OTC sales not tied to a prescription (migration 0021 — the Pharmacy
+-- module as originally built, migration 0017, deliberately deferred this;
+-- see that migration's own docstring). Built to migration 0021's own
+-- 10-field spec, a deliberate departure from this section's earlier sketch
+-- (which had `branch_id`/`patient_id`/`invoice_id` FKs instead): the sale
+-- row *is* the receipt (`customer_name`/`customer_phone` free text,
+-- explicit `total_amount`/`discount_amount`/`net_amount`/`payment_mode`/
+-- `status`), not a pointer to a `patients`/`invoices` row reconciled
+-- elsewhere. No `branch_id` either — consistent with `medicines`/
+-- `medicine_batches` themselves being tenant-wide, not branch-scoped.
+-- `payment_mode` reuses the existing `payment_method` enum (all enum
+-- TYPEs are declared up front in Section 2, so no forward-reference issue
+-- the way a TABLE reference would have) — this is a customer-facing
+-- payment, the same domain as `Payment.method`, unlike Expenses' vendor-
+-- facing `expense_payment_mode`, deliberately kept separate for the
+-- opposite reason. `status` only ever reaches `PAID` from the built API —
+-- `REFUNDED` is a reserved value with no writer yet (migration 0021's own
+-- 3-endpoint spec never asked for a refund endpoint).
 CREATE TABLE pharmacy_sales (
-  id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  tenant_id  UUID NOT NULL REFERENCES clinics(id) ON DELETE CASCADE,
-  branch_id  UUID NOT NULL REFERENCES branches(id),
-  patient_id UUID REFERENCES patients(id),
-  invoice_id UUID,
-  sold_by    UUID NOT NULL REFERENCES users(id),
-  created_at timestamptz NOT NULL DEFAULT now(),
-  updated_at timestamptz NOT NULL DEFAULT now()
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id       UUID NOT NULL REFERENCES clinics(id) ON DELETE CASCADE,
+  customer_name   text,
+  customer_phone  text,
+  total_amount    numeric(12,2) NOT NULL CHECK (total_amount >= 0),
+  discount_amount numeric(12,2) NOT NULL DEFAULT 0 CHECK (discount_amount >= 0),
+  net_amount      numeric(12,2) NOT NULL CHECK (net_amount >= 0),
+  payment_mode    payment_method NOT NULL,
+  status          pharmacy_sale_status NOT NULL DEFAULT 'PAID',
+  created_by      UUID NOT NULL REFERENCES users(id),
+  created_at      timestamptz NOT NULL DEFAULT now()
 );
+CREATE INDEX ix_pharmacy_sales_date ON pharmacy_sales (tenant_id, created_at);
+CREATE INDEX ix_pharmacy_sales_payment_mode ON pharmacy_sales (tenant_id, payment_mode);
+
+-- One row per FEFO-resolved batch allocation within a sale — a cart line
+-- spanning two batches becomes two rows here, the same shape as
+-- prescription dispensing's in-memory `DispenseAllocation`. `unit_price`
+-- snapshots `Medicine.unit_price` at sale time (a receipt must not
+-- silently reprice itself if the catalog changes later).
+CREATE TABLE pharmacy_sale_items (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id   UUID NOT NULL REFERENCES clinics(id) ON DELETE CASCADE,
+  sale_id     UUID NOT NULL REFERENCES pharmacy_sales(id) ON DELETE CASCADE,
+  medicine_id UUID NOT NULL REFERENCES medicines(id),
+  batch_id    UUID NOT NULL REFERENCES medicine_batches(id),
+  quantity    int NOT NULL CHECK (quantity > 0),
+  unit_price  numeric(10,2) NOT NULL,
+  total_price numeric(12,2) NOT NULL,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX ix_pharmacy_sale_items_sale ON pharmacy_sale_items (sale_id);
 
 
 -- =============================================================================
@@ -714,8 +752,10 @@ CREATE TABLE invoices (
 CREATE INDEX ix_invoices_patient ON invoices (patient_id);
 CREATE INDEX ix_invoices_branch_date ON invoices (branch_id, created_at);
 
-ALTER TABLE pharmacy_sales
-  ADD CONSTRAINT fk_pharmacy_sales_invoice FOREIGN KEY (invoice_id) REFERENCES invoices(id);
+-- `pharmacy_sales` has no `invoice_id` at all as actually built (migration
+-- 0021) — the sale row is its own receipt, no reconciliation into Billing
+-- was asked for. The deferred-FK fix-up that used to live here is gone;
+-- see `pharmacy_sales`' own comment in Section 7 for why.
 
 -- `source_type`/`source_id` is polymorphic (CONSULTATION | PROCEDURE |
 -- PHARMACY | LAB | OTHER) rather than an FK, since a line item can point
@@ -1033,8 +1073,10 @@ CREATE TABLE abha_links (
 
 -- 15a. updated_at maintenance — every "master data / entity" table.
 -- (Event/transaction/log tables such as payments, vitals, audit_logs,
--- pharmacy_inventory_transactions, invoice_line_items, communication_logs
--- intentionally have no updated_at — nothing about them is ever updated.)
+-- pharmacy_inventory_transactions, invoice_line_items, communication_logs,
+-- pharmacy_sales, pharmacy_sale_items intentionally have no updated_at —
+-- nothing about them is ever updated; `pharmacy_sales`/`pharmacy_sale_items`
+-- joined this list in migration 0021, following payments' own precedent.)
 DO $$
 DECLARE
   t text;
@@ -1043,7 +1085,7 @@ BEGIN
     'platform_admins','clinics','plans','branches','subscriptions','tenant_settings',
     'permission_overrides','users','doctor_profiles','staff_profiles','patients',
     'appointments','encounters','queue_tokens','consultations','medicines',
-    'medicine_batches','pharmacy_sales','prescription_items','lab_test_catalog',
+    'medicine_batches','prescription_items','lab_test_catalog',
     'lab_orders','lab_results','invoices','invoice_line_items','expenses','inventory_items','leads',
     'follow_ups','notification_templates','telemedicine_sessions','abha_links'
   ])
@@ -1090,7 +1132,7 @@ BEGIN
     'staff_profiles','user_branch_assignments','permission_overrides','otp_codes',
     'user_sessions','patients',
     'appointments','encounters','queue_tokens','vitals','consultations','medicines',
-    'medicine_batches','pharmacy_inventory_transactions','pharmacy_sales',
+    'medicine_batches','pharmacy_inventory_transactions','pharmacy_sales','pharmacy_sale_items',
     'prescriptions','prescription_items','lab_test_catalog','lab_orders','lab_results',
     'invoices','invoice_line_items','payments','expenses','inventory_items',
     'inventory_transactions','leads','follow_ups','notification_templates',
@@ -1161,6 +1203,7 @@ INSERT INTO permissions (code, module, description) VALUES
   ('pharmacy.manage_catalog',     'pharmacy',       'Manage medicine catalog and stock'),
   ('pharmacy.view_catalog',       'pharmacy',       'View medicine catalog and batch stock levels — read-only'),
   ('pharmacy.dispense',           'pharmacy',       'Dispense prescriptions / process OTC sales'),
+  ('pharmacy.sell_otc',           'pharmacy',       'Create/view OTC counter sales (not tied to a prescription) — Receptionist-only addition; Owner/Pharmacy Staff already reach the same routes via pharmacy.dispense'),
   ('lab.manage_catalog',          'laboratory',     'Manage lab test catalog'),
   ('lab.order',                   'laboratory',     'Order lab tests'),
   ('lab.enter_results',           'laboratory',     'Enter/finalize lab results'),
@@ -1209,7 +1252,7 @@ SELECT r.id, p.id FROM roles r, permissions p WHERE (r.code, p.code) IN (
   ('RECEPTIONIST','queue.manage'), ('RECEPTIONIST','queue.view'), ('RECEPTIONIST','vitals.view'),
   ('RECEPTIONIST','billing.manage'),
   ('RECEPTIONIST','payments.record'), ('RECEPTIONIST','crm.manage'),
-  ('RECEPTIONIST','communications.send'), ('RECEPTIONIST','expenses.record'),
+  ('RECEPTIONIST','communications.send'), ('RECEPTIONIST','expenses.record'), ('RECEPTIONIST','pharmacy.sell_otc'),
 
   ('NURSE','patients.view_demographics'), ('NURSE','vitals.record'), ('NURSE','vitals.view'),
   ('NURSE','checkin.view'), ('NURSE','queue.view'),

@@ -14,7 +14,7 @@ from sqlalchemy import select, text
 from app.core.db import platform_admin_session, tenant_session
 from app.core.security import hash_password
 from app.modules.auth.models import User
-from app.modules.pharmacy.models import Medicine, MedicineBatch, PharmacyInventoryTransaction
+from app.modules.pharmacy.models import Medicine, MedicineBatch, PharmacyInventoryTransaction, PharmacySale, PharmacySaleItem
 from app.modules.tenancy.models import Clinic
 
 pytestmark = pytest.mark.usefixtures("require_db")
@@ -104,5 +104,89 @@ async def test_rls_blocks_even_a_deliberately_unscoped_pharmacy_query(api_client
         assert visible_medicine_ids == {medicine_a_id}
         assert visible_batch_ids == {batch_a_id}
         assert visible_txn_ids == {txn_a_id}
+    finally:
+        await _teardown([clinic_a.id, clinic_b.id])
+
+
+async def test_otc_sale_created_in_one_tenant_is_invisible_via_api_in_another(api_client: AsyncClient, role_map: dict[str, uuid.UUID]) -> None:
+    clinic_a, _ = await _create_clinic_with_owner(role_map, email="owner@pharmacy-e.clinic", password="pw")
+    clinic_b, _ = await _create_clinic_with_owner(role_map, email="owner@pharmacy-f.clinic", password="pw")
+
+    try:
+        headers_a = await _login(api_client, clinic_a, "owner@pharmacy-e.clinic", "pw")
+        headers_b = await _login(api_client, clinic_b, "owner@pharmacy-f.clinic", "pw")
+
+        for headers in (headers_a, headers_b):
+            flag = await api_client.put("/api/v1/clinics/me/settings/features.pharmacy_enabled", json={"value": True}, headers=headers)
+            assert flag.status_code == 200
+
+        medicine = await api_client.post("/api/v1/pharmacy/medicines", json={"name": "TenantAOtcMedicine"}, headers=headers_a)
+        assert medicine.status_code == 201
+        medicine_id = medicine.json()["id"]
+        batch = await api_client.post(
+            f"/api/v1/pharmacy/medicines/{medicine_id}/batches",
+            json={"batch_number": "B1", "expiry_date": (date.today() + timedelta(days=30)).isoformat(), "quantity": 10},
+            headers=headers_a,
+        )
+        assert batch.status_code == 201
+
+        sale = await api_client.post(
+            "/api/v1/pharmacy/sales", json={"items": [{"medicine_id": medicine_id, "quantity": 1}], "payment_mode": "CASH"}, headers=headers_a
+        )
+        assert sale.status_code == 201
+        sale_id = sale.json()["id"]
+
+        list_b = await api_client.get("/api/v1/pharmacy/sales", headers=headers_b)
+        assert all(s["id"] != sale_id for s in list_b.json()["items"])
+        direct_b = await api_client.get(f"/api/v1/pharmacy/sales/{sale_id}", headers=headers_b)
+        assert direct_b.status_code == 404
+        direct_a = await api_client.get(f"/api/v1/pharmacy/sales/{sale_id}", headers=headers_a)
+        assert direct_a.status_code == 200
+    finally:
+        await _teardown([clinic_a.id, clinic_b.id])
+
+
+async def test_rls_blocks_even_a_deliberately_unscoped_pharmacy_sales_query(api_client: AsyncClient, role_map: dict[str, uuid.UUID]) -> None:
+    clinic_a, owner_a_id = await _create_clinic_with_owner(role_map, email="owner@pharmacy-g.clinic", password="pw")
+    clinic_b, owner_b_id = await _create_clinic_with_owner(role_map, email="owner@pharmacy-h.clinic", password="pw")
+
+    try:
+        async with tenant_session(clinic_a.id) as session:
+            medicine_a = Medicine(tenant_id=clinic_a.id, name="A", unit_price=10)
+            session.add(medicine_a)
+            await session.flush()
+            batch_a = MedicineBatch(tenant_id=clinic_a.id, medicine_id=medicine_a.id, batch_number="B1", expiry_date=date.today() + timedelta(days=30), quantity_on_hand=10)
+            session.add(batch_a)
+            await session.flush()
+            sale_a = PharmacySale(tenant_id=clinic_a.id, total_amount=10, discount_amount=0, net_amount=10, payment_mode="CASH", created_by=owner_a_id)
+            session.add(sale_a)
+            await session.flush()
+            item_a = PharmacySaleItem(tenant_id=clinic_a.id, sale_id=sale_a.id, medicine_id=medicine_a.id, batch_id=batch_a.id, quantity=1, unit_price=10, total_price=10)
+            session.add(item_a)
+            await session.flush()
+            sale_a_id, item_a_id = sale_a.id, item_a.id
+
+        async with tenant_session(clinic_b.id) as session:
+            medicine_b = Medicine(tenant_id=clinic_b.id, name="B", unit_price=10)
+            session.add(medicine_b)
+            await session.flush()
+            batch_b = MedicineBatch(tenant_id=clinic_b.id, medicine_id=medicine_b.id, batch_number="B1", expiry_date=date.today() + timedelta(days=30), quantity_on_hand=10)
+            session.add(batch_b)
+            await session.flush()
+            sale_b = PharmacySale(tenant_id=clinic_b.id, total_amount=10, discount_amount=0, net_amount=10, payment_mode="CASH", created_by=owner_b_id)
+            session.add(sale_b)
+            await session.flush()
+            session.add(PharmacySaleItem(tenant_id=clinic_b.id, sale_id=sale_b.id, medicine_id=medicine_b.id, batch_id=batch_b.id, quantity=1, unit_price=10, total_price=10))
+
+        async with tenant_session(clinic_a.id) as session:
+            # No `.where(...tenant_id == ...)` — the app-layer mistake RLS
+            # exists to catch.
+            sale_result = await session.execute(select(PharmacySale))
+            visible_sale_ids = {s.id for s in sale_result.scalars().all()}
+            item_result = await session.execute(select(PharmacySaleItem))
+            visible_item_ids = {i.id for i in item_result.scalars().all()}
+
+        assert visible_sale_ids == {sale_a_id}
+        assert visible_item_ids == {item_a_id}
     finally:
         await _teardown([clinic_a.id, clinic_b.id])
