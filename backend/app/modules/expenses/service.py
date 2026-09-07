@@ -10,7 +10,8 @@ matrix deviation — see migration 0020's docstring) gates create/read only.
 """
 
 import uuid
-from datetime import date
+from datetime import date, datetime, timezone
+from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException, status
 
@@ -24,7 +25,24 @@ from app.modules.expenses.schemas import (
     ExpenseSummary,
     ExpenseUpdateRequest,
 )
-from app.modules.tenancy.repository import BranchRepository
+from app.modules.tenancy.repository import BranchRepository, ClinicRepository
+
+
+async def _clinic_local_today(session, tenant_id: uuid.UUID) -> date:
+    """`Expense.expense_date`'s DB `server_default=func.current_date()`
+    evaluates in Postgres's own session timezone (UTC, unconditionally —
+    confirmed via `SHOW timezone`), not the clinic's configured
+    `Clinic.timezone` (default `'Asia/Kolkata'`, validated as a real IANA
+    zone at write time by `app/modules/tenancy/schemas.py`, so `ZoneInfo`
+    here never raises). For a UTC+5:30 clinic, "today" by the DB's UTC
+    default and "today" on the clinic's own wall calendar disagree for
+    ~5.5 hours out of every day (00:00-05:29 IST) — not a rare edge case.
+    This computes the real thing "defaults to today" was always supposed
+    to mean, so the app now always sets `expense_date` explicitly instead
+    of leaning on the DB default."""
+    clinic = await ClinicRepository(session).get_by_id(tenant_id)
+    tz = ZoneInfo(clinic.timezone) if clinic is not None else timezone.utc
+    return datetime.now(tz).date()
 
 
 class ExpenseService:
@@ -34,8 +52,7 @@ class ExpenseService:
                 raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"Branch '{payload.branch_id}' does not exist")
 
             fields = payload.model_dump(exclude={"expense_date"})
-            if payload.expense_date is not None:
-                fields["expense_date"] = payload.expense_date
+            fields["expense_date"] = payload.expense_date or await _clinic_local_today(session, tenant_id)
 
             expense = await ExpenseRepository(session).create(tenant_id=tenant_id, recorded_by=actor_user_id, **fields)
             summary = ExpenseSummary.model_validate(expense)

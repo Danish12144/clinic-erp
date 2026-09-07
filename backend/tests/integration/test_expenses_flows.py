@@ -3,7 +3,8 @@ filtering/aggregation, RBAC) against a real Postgres — see
 tests/conftest.py (skipped automatically if unreachable).
 """
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import pytest
 from httpx import AsyncClient
@@ -132,11 +133,29 @@ async def test_search_filters_by_date_range(api_client: AsyncClient, owner_heade
     assert response.json()["total_amount"] == "200.00"
 
 
-async def test_expense_date_defaults_to_today_when_omitted(api_client: AsyncClient, owner_headers: dict[str, str]) -> None:
+async def test_expense_date_defaults_to_todays_date_in_the_clinics_timezone(api_client: AsyncClient, owner_headers: dict[str, str]) -> None:
+    # Deliberately NOT `date.today()` (this machine's own OS timezone) —
+    # that disagrees with a UTC+5:30 clinic's real "today" for ~5.5 hours
+    # a day and made this test fail non-deterministically depending on
+    # what time it happened to run. The clinic's timezone defaults to
+    # 'Asia/Kolkata' (untouched by this test), so that's the deterministic
+    # value the app is actually supposed to compute.
     branch_id = await _create_branch(api_client, owner_headers, "DefaultDateBranch")
     response = await api_client.post("/api/v1/expenses", json=_payload(branch_id), headers=owner_headers)
     assert response.status_code == 201
-    assert response.json()["expense_date"] == date.today().isoformat()
+    expected = datetime.now(ZoneInfo("Asia/Kolkata")).date()
+    assert response.json()["expense_date"] == expected.isoformat()
+
+
+async def test_expense_date_default_honors_a_non_default_clinic_timezone(api_client: AsyncClient, owner_headers: dict[str, str]) -> None:
+    updated_clinic = await api_client.patch("/api/v1/clinics/me", json={"timezone": "Pacific/Kiritimati"}, headers=owner_headers)
+    assert updated_clinic.status_code == 200
+
+    branch_id = await _create_branch(api_client, owner_headers, "TimezoneOverrideBranch")
+    response = await api_client.post("/api/v1/expenses", json=_payload(branch_id), headers=owner_headers)
+    assert response.status_code == 201
+    expected = datetime.now(ZoneInfo("Pacific/Kiritimati")).date()
+    assert response.json()["expense_date"] == expected.isoformat()
 
 
 async def test_total_amount_sums_across_the_full_filtered_set_not_just_the_page(api_client: AsyncClient, owner_headers: dict[str, str]) -> None:

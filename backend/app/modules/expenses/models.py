@@ -47,6 +47,11 @@ class Expense(Base):
     branch_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("branches.id"), nullable=False)
     category: Mapped[ExpenseCategory] = mapped_column(expense_category_enum, nullable=False)
     amount: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
+    # server_default is UTC "today" (Postgres's own session timezone) and
+    # is only a last-resort DB-level fallback — ExpenseService.create_expense
+    # always sets this explicitly to the clinic's local today (via
+    # Clinic.timezone) when the caller omits it, since the two disagree
+    # for ~5.5 hours a day for a UTC+5:30 clinic.
     expense_date: Mapped[date] = mapped_column(Date, server_default=func.current_date())
     payment_mode: Mapped[ExpensePaymentMode] = mapped_column(expense_payment_mode_enum, nullable=False)
     vendor: Mapped[str | None] = mapped_column(Text, nullable=True)
