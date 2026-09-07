@@ -835,29 +835,56 @@ CREATE INDEX ix_expenses_category ON expenses (tenant_id, category);
 -- 11. GENERAL (NON-PHARMACY) INVENTORY
 -- =============================================================================
 
+-- Built by migration 0022, to a fresh field list and enum vocabulary
+-- rather than this section's earlier sketch, all by direct instruction:
+-- `category`/`unit` become real enums (`inventory_item_category`,
+-- `inventory_unit`) instead of free text; columns are named
+-- `current_stock`/`min_reorder_level` (not `quantity_on_hand`/
+-- `reorder_threshold`); `cost_per_unit`/`is_active` are new; no
+-- `branch_id`, consistent with `medicines`/`medicine_batches` also being
+-- tenant-wide despite this doc's own similarly branch-scoped framing for
+-- those. See migration 0022's docstring for the full rationale.
+CREATE TYPE inventory_item_category AS ENUM ('CONSUMABLE','EQUIPMENT','LAB_SUPPLY','OFFICE');
+CREATE TYPE inventory_unit AS ENUM ('PIECES','PACKS','BOXES');
+
 CREATE TABLE inventory_items (
-  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  tenant_id         UUID NOT NULL REFERENCES clinics(id) ON DELETE CASCADE,
-  branch_id         UUID NOT NULL REFERENCES branches(id),
-  name              text NOT NULL,
-  category          text,
-  unit              text,
-  quantity_on_hand  numeric(10,2) NOT NULL DEFAULT 0,
-  reorder_threshold numeric(10,2),
-  created_at        timestamptz NOT NULL DEFAULT now(),
-  updated_at        timestamptz NOT NULL DEFAULT now()
+  id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id          UUID NOT NULL REFERENCES clinics(id) ON DELETE CASCADE,
+  name               text NOT NULL,
+  category           inventory_item_category NOT NULL,
+  unit               inventory_unit NOT NULL,
+  current_stock      numeric(10,2) NOT NULL DEFAULT 0 CHECK (current_stock >= 0),
+  min_reorder_level  numeric(10,2) NOT NULL DEFAULT 0,
+  cost_per_unit      numeric(10,2) NOT NULL DEFAULT 0,
+  is_active          boolean NOT NULL DEFAULT true,
+  created_at         timestamptz NOT NULL DEFAULT now(),
+  updated_at         timestamptz NOT NULL DEFAULT now()
 );
+CREATE INDEX ix_inventory_items_category ON inventory_items (tenant_id, category);
+
+-- `change_type` is a wholly new `inventory_change_type` enum
+-- (PURCHASE/USAGE/ADJUSTMENT/RETURN), not a reuse of Pharmacy's
+-- `inventory_txn_type` (RECEIVE/DISPENSE/SALE/ADJUST/EXPIRE_WRITE_OFF) —
+-- a different domain (non-medicine consumables/equipment) with a
+-- different vocabulary, by direct instruction. `quantity` stores the
+-- caller's submitted magnitude as-is (always positive for
+-- PURCHASE/USAGE/RETURN; either sign for ADJUSTMENT) rather than a
+-- pre-signed `quantity_delta` — the app derives the signed delta applied
+-- to `current_stock`.
+CREATE TYPE inventory_change_type AS ENUM ('PURCHASE','USAGE','ADJUSTMENT','RETURN');
 
 CREATE TABLE inventory_transactions (
-  id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  tenant_id      UUID NOT NULL REFERENCES clinics(id) ON DELETE CASCADE,
-  item_id        UUID NOT NULL REFERENCES inventory_items(id) ON DELETE CASCADE,
-  type           inventory_txn_type NOT NULL,
-  quantity_delta numeric(10,2) NOT NULL,
-  reference      text,
-  performed_by   UUID NOT NULL REFERENCES users(id),
-  created_at     timestamptz NOT NULL DEFAULT now()
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id    UUID NOT NULL REFERENCES clinics(id) ON DELETE CASCADE,
+  item_id      UUID NOT NULL REFERENCES inventory_items(id) ON DELETE CASCADE,
+  change_type  inventory_change_type NOT NULL,
+  quantity     numeric(10,2) NOT NULL CHECK (quantity <> 0),
+  reference_id UUID,
+  performed_by UUID NOT NULL REFERENCES users(id),
+  notes        text,
+  created_at   timestamptz NOT NULL DEFAULT now()
 );
+CREATE INDEX ix_inventory_txn_item ON inventory_transactions (item_id, created_at);
 
 
 -- =============================================================================
@@ -1209,6 +1236,8 @@ INSERT INTO permissions (code, module, description) VALUES
   ('lab.enter_results',           'laboratory',     'Enter/finalize lab results'),
   ('lab.view_results',            'laboratory',     'View lab orders/results — Patient further scoped to own COMPLETED orders'),
   ('inventory.manage',            'inventory',      'Manage general (non-pharmacy) inventory'),
+  ('inventory.view',              'inventory',      'Read-only access to general (non-pharmacy) inventory items and low-stock alerts'),
+  ('inventory.record_usage',      'inventory',      'Read general inventory items/alerts and log USAGE transactions only — PURCHASE/ADJUSTMENT/RETURN remain inventory.manage-only'),
   ('expenses.manage',             'finance',        'Record and manage expenses'),
   ('expenses.record',             'finance',        'Record and view expenses (no edit) — petty-cash logging. Receptionist only, a deliberate PRD §3 matrix deviation (matrix says Receptionist "–" on general inventory & expenses)'),
   ('crm.manage',                  'crm',            'Manage leads and follow-ups'),
@@ -1245,6 +1274,7 @@ SELECT r.id, p.id FROM roles r, permissions p WHERE (r.code, p.code) IN (
   ('DOCTOR','consultation.manage'), ('DOCTOR','consultation.view'),
   ('DOCTOR','prescription.manage'), ('DOCTOR','prescription.view'), ('DOCTOR','dashboard.view_own'),
   ('DOCTOR','lab.order'), ('DOCTOR','lab.view_results'), ('DOCTOR','billing.view_own'), ('DOCTOR','pharmacy.view_catalog'), ('DOCTOR','crm.manage'),
+  ('DOCTOR','inventory.view'),
 
   ('RECEPTIONIST','patients.register'), ('RECEPTIONIST','patients.view_demographics'),
   ('RECEPTIONIST','appointments.manage'), ('RECEPTIONIST','appointments.view'),
@@ -1253,15 +1283,18 @@ SELECT r.id, p.id FROM roles r, permissions p WHERE (r.code, p.code) IN (
   ('RECEPTIONIST','billing.manage'),
   ('RECEPTIONIST','payments.record'), ('RECEPTIONIST','crm.manage'),
   ('RECEPTIONIST','communications.send'), ('RECEPTIONIST','expenses.record'), ('RECEPTIONIST','pharmacy.sell_otc'),
+  ('RECEPTIONIST','inventory.record_usage'),
 
   ('NURSE','patients.view_demographics'), ('NURSE','vitals.record'), ('NURSE','vitals.view'),
   ('NURSE','checkin.view'), ('NURSE','queue.view'),
   ('NURSE','consultation.view'), ('NURSE','prescription.view'),
-  ('NURSE','appointments.view'),
+  ('NURSE','appointments.view'), ('NURSE','inventory.record_usage'),
 
   ('LAB_STAFF','lab.order'), ('LAB_STAFF','lab.enter_results'), ('LAB_STAFF','lab.view_results'), ('LAB_STAFF','patients.view_demographics'),
 
   ('PHARMACY_STAFF','pharmacy.manage_catalog'), ('PHARMACY_STAFF','pharmacy.view_catalog'), ('PHARMACY_STAFF','pharmacy.dispense'), ('PHARMACY_STAFF','patients.view_demographics'),
+
+  ('OTHER_STAFF','inventory.record_usage'),
 
   ('PATIENT','appointments.book_own'), ('PATIENT','billing.view_own'), ('PATIENT','doctors.view_directory'), ('PATIENT','patients.view_emr'), ('PATIENT','lab.view_results')
 );
