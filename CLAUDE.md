@@ -2,6 +2,40 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Audit — 2026-09-09 (read this first before resuming)
+
+Full architectural/PRD audit, grounded against `docs/PRD-ARCHITECTURE.md` (not just memory) plus a fresh inventory of `frontend/src` and `frontend/package.json`. **Where things stand:** backend covers PRD §29 Phases 0–7 (Foundation → People → Core Clinical Flow → Financial Core → Pharmacy & Lab → Operations → Engagement/Oversight scaffolding), all with full pytest coverage. Frontend (started this session, from scratch) covers only a **slice** of Phases 0–2 — Auth, Patients (search/register/walk-in), Staff Directory, Doctor OPD Consultation + Rx PDF, and an operational Dashboard. Everything else the backend already supports (Billing, Pharmacy, Lab, Inventory, CRM/Leads, Analytics, Portal) is still frontend-invisible.
+
+**1. PRD alignment**
+- Core clinical workflow fidelity is good: the queue state machine, append-only vitals, and prescription immutability-via-supersede (never edit) are all correctly respected by the UI — confirmed against §5.1/§5.3/§5.7, not just assumed. RBAC gating in the UI matches §2/§3 exactly and was live-verified against the running backend this session (e.g. Doctor genuinely lacks `queue.manage` server-side, not just hidden client-side).
+- **Real gap, not yet a backlog item below:** PRD §5.1 steps 1–2 (online booking, receptionist scheduled booking via the Appointments module — slot picker, "book for next Tuesday") have **no frontend at all**. Every check-in path we built (`NewPatientDialog`, `IssueTokenDialog`) goes through the walk-in endpoint only. The Appointments module's booking/slot-validation logic is fully built and tested on the backend and completely unused by the frontend.
+- Structural deviation from §9's proposed layout: PRD suggests each `features/x` folder owns its hooks *and* route components *and* forms together. We split it — `features/x` owns API/hooks/types, `components/x` owns UI, `pages/` owns routes. Deliberate (data/UI separation), not an oversight, but worth knowing before adding a new feature so it lands in the right place.
+- React Hook Form + Zod instead of §9's suggested "TanStack Form + Zod" — by direct user instruction at the Step 6 kickoff, not a drift.
+- Patient portal (`/portal/*`) and the public booking widget (§9 items 2–3) are untouched — expected, PRD phases these into 6+, not a gap at this stage.
+
+**2. Integrity & health**
+- *Resolved this session, not still open:* the Dashboard KPI replacement (commit `766d600`) and the `client.ts` "Cannot read properties of undefined (reading 'send')" console error — root-caused to Vite's own HMR client (`node_modules/vite/dist/client/client.mjs`, TS-sourced as `client.ts`), confirmed by grepping all of `frontend/src` for `.send(`/`WebSocket`/`BroadcastChannel`/`MessageChannel` (zero matches — the app has no code of that shape at all). Not a real app bug; dev server was fully restarted.
+- **Zero frontend test coverage.** PRD §27 explicitly requires Vitest + React Testing Library (form validation, permission-aware rendering, critical components) and Playwright e2e for the core patient journey. Neither exists — no test script, no test-runner dependency in `package.json` at all. This is the single biggest gap versus the backend's own discipline (700+ tests).
+- No `ErrorBoundary` anywhere — an uncaught render exception white-screens the whole app with no recovery UI.
+- No production deployment config: `.env.example` only documents a localhost `VITE_API_BASE_URL`, no `vercel.json`, and backend's `CORS_ORIGINS` (`app/core/config.py`) has no documented production-origin story — not even listed in `backend/.env.example`.
+- Main JS bundle is unsplit (~740KB, Vite's own build warning fires every session) — no route-level `React.lazy` code-splitting yet.
+- PRD §25 requires rate-limiting on auth/OTP endpoints — not re-verified this session; flag for confirmation next time backend is touched.
+- Security posture is otherwise sound: every mutation is backend-authoritative (permission-gated UI is UX only, never the real boundary — verified live), tenant scoping has zero client-side surface (frontend never sends `tenant_id`), and object URLs from the PDF preview are properly revoked. JWT access+refresh tokens live in `localStorage` (not httpOnly cookies) — a standard, accepted SPA tradeoff, not a PRD violation (PRD doesn't mandate cookie storage), but worth a deliberate look during the pre-launch hardening pass §29 already calls for.
+- Known technical debt (not urgent): three near-duplicate "debounced search dropdown" implementations (`RxTable`'s medicine autocomplete, `LabOrderPanel`'s test search, `IssueTokenDialog`'s patient search) with no shared component; `features/opd/use-doctor-queue.ts` and `features/dashboard/use-live-queue-snapshot.ts` duplicate the same queue→encounter→patient join, differing only by a `doctorId` filter. Both are candidates for extraction once a third caller shows up — not before.
+
+**3. Next roadmap, in priority order**
+1. **Billing & Invoicing UI** (Phase 3) — invoice list/detail, line-item management, record payment, void/reverse. Backend 100% ready; zero frontend exists. Also closes a real dead end: today, finishing a consultation and issuing an Rx has nowhere to go next.
+2. **Pharmacy dispense + inventory UI** (Phase 4) — FEFO dispense queue against issued prescriptions, medicine catalog management, batch receiving, OTC POS. Backend fully ready.
+3. **Lab result-entry UI** (Phase 4, remainder) — only doctor-side *ordering* exists (in the OPD pad); Lab Staff has no sample-collection/result-entry screen at all.
+4. **Scheduled/Appointment booking UI** (finishing Phase 2) — receptionist-side slot picker against the already-built Appointments module; today the frontend only does same-day walk-in.
+5. **Owner Analytics & Reports** (Phase 7 remainder) — the `reports`/`analytics` backend endpoints (revenue by service type, payment-mode breakdowns) have no frontend; today's Dashboard is operational KPIs only, not financial reporting.
+6. **General Inventory + Expenses UI** (Phase 5) — backend ready, smaller/lower-urgency admin screens.
+7. **Frontend test coverage** (Vitest + RTL, then Playwright for the core journey) — PRD §27 requirement; thread this through each module above as it ships rather than bolting it on at the end.
+8. **Production hardening + Vercel deployment** — dev/staging/prod env split, route-level code-splitting, `ErrorBoundary`, a real `CORS_ORIGINS` production entry, `vercel.json`, CI (GitHub Actions: lint + typecheck + test on PR, per §28).
+9. **CRM/Leads UI + Patient Portal** (Phase 6) — backend ready for follow-ups/leads; the portal is a bigger, separate initiative (its own auth context per §9). Correctly last, matching PRD's own phase ordering.
+
+---
+
 ## Project state — read this first
 
 This repo pivoted from a single-tenant demo scaffold to **Clinic ERP + CRM**, a multi-tenant SaaS product, being built module-by-module against a from-scratch design. The authoritative design docs are:
