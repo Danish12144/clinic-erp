@@ -48,7 +48,7 @@ export function PrescriptionPreviewDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex h-[85vh] max-w-3xl flex-col">
+      <DialogContent className="flex h-[85vh] flex-col sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>Prescription generated</DialogTitle>
         </DialogHeader>

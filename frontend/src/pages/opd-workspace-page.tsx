@@ -147,8 +147,8 @@ function ConsultationPad({
   const isFinalizing = isSubmitting || issuePrescription.isPending || completeConsultation.isPending
 
   return (
-    <div className="flex flex-col gap-4 p-6">
-      <div className="flex items-center justify-between">
+    <div className="flex flex-col gap-4 p-4 sm:p-6">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <Link to="/opd" className="mb-1 flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
             <ArrowLeft className="size-3.5" />
@@ -175,7 +175,7 @@ function ConsultationPad({
             <Label htmlFor="chiefComplaint">Chief complaint</Label>
             <Textarea id="chiefComplaint" rows={2} {...register('chiefComplaint')} />
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="diagnosisText">Diagnosis</Label>
               <Textarea id="diagnosisText" rows={2} {...register('diagnosisText')} />
@@ -242,7 +242,7 @@ export function OpdWorkspacePage() {
 
   if (encounterQuery.isLoading || consultationQuery.isLoading || (consultationQuery.data && patientQuery.isLoading)) {
     return (
-      <div className="flex flex-col gap-4 p-6">
+      <div className="flex flex-col gap-4 p-4 sm:p-6">
         <Skeleton className="h-8 w-64" />
         <Skeleton className="h-40 w-full" />
         <Skeleton className="h-64 w-full" />

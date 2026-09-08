@@ -53,8 +53,8 @@ export function StaffDirectoryPage() {
   }, [staffQuery.data, doctorsQuery.data])
 
   return (
-    <div className="flex flex-col gap-4 p-6">
-      <div className="flex items-center justify-between">
+    <div className="flex flex-col gap-4 p-4 sm:p-6">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold">Staff Directory</h1>
           <p className="text-sm text-muted-foreground">All clinic staff, including doctors.</p>

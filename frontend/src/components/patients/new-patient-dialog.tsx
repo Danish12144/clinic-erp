@@ -170,14 +170,14 @@ export function NewPatientDialog({ open, onOpenChange }: { open: boolean; onOpen
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90vh] max-w-lg overflow-y-auto">
+      <DialogContent className="max-h-[90vh] sm:max-w-lg overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Register new patient</DialogTitle>
           <DialogDescription>MRN is generated automatically.</DialogDescription>
         </DialogHeader>
 
         <form className="flex flex-col gap-4" onSubmit={handleSubmit(onSubmit)} noValidate>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="first_name">First name *</Label>
               <Input id="first_name" {...register('first_name')} />
@@ -189,7 +189,7 @@ export function NewPatientDialog({ open, onOpenChange }: { open: boolean; onOpen
             </div>
           </div>
 
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <div className="flex flex-col gap-1.5">
               <Label>Gender</Label>
               <Controller
@@ -220,7 +220,7 @@ export function NewPatientDialog({ open, onOpenChange }: { open: boolean; onOpen
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="phone">Phone</Label>
               <Input id="phone" type="tel" {...register('phone')} />
@@ -242,7 +242,7 @@ export function NewPatientDialog({ open, onOpenChange }: { open: boolean; onOpen
             <summary className="cursor-pointer font-medium text-muted-foreground">
               Optional: ABHA (ABDM) details
             </summary>
-            <div className="mt-3 grid grid-cols-2 gap-3">
+            <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="abhaId">ABHA number</Label>
                 <Input id="abhaId" placeholder="14-digit ABHA number" {...register('abhaId')} />
@@ -274,7 +274,7 @@ export function NewPatientDialog({ open, onOpenChange }: { open: boolean; onOpen
               </div>
 
               {checkInNow && (
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <div className="flex flex-col gap-1.5">
                     <Label>Branch *</Label>
                     <Controller

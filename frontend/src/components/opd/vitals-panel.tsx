@@ -80,7 +80,7 @@ export function VitalsPanel({ encounterId }: { encounterId: string }) {
       </CardHeader>
       <CardContent>
         {latest && !editing ? (
-          <dl className="grid grid-cols-4 gap-3 text-sm">
+          <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
             <div>
               <dt className="text-muted-foreground">BP</dt>
               <dd className="font-medium">
@@ -102,7 +102,7 @@ export function VitalsPanel({ encounterId }: { encounterId: string }) {
           </dl>
         ) : (
           <form className="flex flex-col gap-3" onSubmit={handleSubmit(onSubmit)} noValidate>
-            <div className="grid grid-cols-5 gap-3">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="systolic">BP systolic</Label>
                 <Input id="systolic" inputMode="numeric" placeholder="120" {...register('systolic')} />

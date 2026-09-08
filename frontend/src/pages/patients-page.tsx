@@ -22,8 +22,8 @@ export function PatientsPage() {
   const { data, isLoading, isFetching } = usePatientSearch(searchTerm)
 
   return (
-    <div className="flex flex-col gap-4 p-6">
-      <div className="flex items-center justify-between">
+    <div className="flex flex-col gap-4 p-4 sm:p-6">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold">Patients</h1>
           <p className="text-sm text-muted-foreground">Search by phone, MRN, or name.</p>

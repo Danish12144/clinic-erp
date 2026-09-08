@@ -133,7 +133,7 @@ export function InviteStaffDialog({ open, onOpenChange }: { open: boolean; onOpe
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="sm:max-w-md">
         {success ? (
           <>
             <DialogHeader>
@@ -186,7 +186,7 @@ export function InviteStaffDialog({ open, onOpenChange }: { open: boolean; onOpe
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div className="flex flex-col gap-1.5">
                   <Label htmlFor="first_name">First name *</Label>
                   <Input id="first_name" {...register('first_name')} />
@@ -198,7 +198,7 @@ export function InviteStaffDialog({ open, onOpenChange }: { open: boolean; onOpe
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div className="flex flex-col gap-1.5">
                   <Label htmlFor="email">Email</Label>
                   <Input id="email" type="email" {...register('email')} />
@@ -212,7 +212,7 @@ export function InviteStaffDialog({ open, onOpenChange }: { open: boolean; onOpe
               </div>
 
               {isDoctor ? (
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                   <div className="flex flex-col gap-1.5">
                     <Label htmlFor="specialization">Specialization</Label>
                     <Input id="specialization" {...register('specialization')} />
