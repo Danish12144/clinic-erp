@@ -4,7 +4,13 @@ import type {
   PatientCreateResponse,
   PatientListResponse,
   PatientSearchParams,
+  PatientSummary,
 } from '@/features/patients/types'
+
+export async function getPatient(patientId: string): Promise<PatientSummary> {
+  const { data } = await apiClient.get<PatientSummary>(`/patients/${patientId}`)
+  return data
+}
 
 export async function searchPatients(params: PatientSearchParams): Promise<PatientListResponse> {
   const { data } = await apiClient.get<PatientListResponse>('/patients', {

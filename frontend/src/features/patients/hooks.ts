@@ -1,8 +1,16 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { createPatient, searchPatients } from '@/features/patients/api'
+import { createPatient, getPatient, searchPatients } from '@/features/patients/api'
 import { classifyPatientSearchTerm } from '@/features/patients/search-classifier'
 import { useDebouncedValue } from '@/lib/use-debounced-value'
 import type { PatientCreateRequest } from '@/features/patients/types'
+
+export function usePatient(patientId: string | undefined) {
+  return useQuery({
+    queryKey: ['patients', 'get', patientId],
+    queryFn: () => getPatient(patientId!),
+    enabled: Boolean(patientId),
+  })
+}
 
 // Debounced, live patient search — an empty term browses the most
 // recently registered patients (the backend's own default ordering when

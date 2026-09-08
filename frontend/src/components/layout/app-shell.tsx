@@ -1,4 +1,4 @@
-import { LayoutDashboard, LogOut, Stethoscope, Users } from 'lucide-react'
+import { ClipboardList, LayoutDashboard, LogOut, Stethoscope, Users } from 'lucide-react'
 import { NavLink, Outlet } from 'react-router-dom'
 import { useAuth } from '@/features/auth/auth-context'
 import { Button } from '@/components/ui/button'
@@ -14,6 +14,7 @@ interface NavItem {
 const NAV_ITEMS: NavItem[] = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard },
   { to: '/patients', label: 'Patients', icon: Users, permission: 'patients.view_demographics' },
+  { to: '/opd', label: 'OPD Queue', icon: ClipboardList, permission: 'consultation.manage' },
   { to: '/staff', label: 'Staff Directory', icon: Stethoscope, permission: 'staff.manage' },
 ]
 

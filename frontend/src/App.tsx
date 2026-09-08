@@ -6,6 +6,8 @@ import { Toaster } from '@/components/ui/sonner'
 import { AuthProvider } from '@/features/auth/auth-context'
 import { DashboardPage } from '@/pages/dashboard-page'
 import { LoginPage } from '@/pages/login-page'
+import { OpdQueuePage } from '@/pages/opd-queue-page'
+import { OpdWorkspacePage } from '@/pages/opd-workspace-page'
 import { PatientsPage } from '@/pages/patients-page'
 import { StaffDirectoryPage } from '@/pages/staff-directory-page'
 import { RequireAuth } from '@/routes/require-auth'
@@ -39,6 +41,22 @@ export default function App() {
                 element={
                   <RequirePermission permission="staff.manage">
                     <StaffDirectoryPage />
+                  </RequirePermission>
+                }
+              />
+              <Route
+                path="/opd"
+                element={
+                  <RequirePermission permission="consultation.manage">
+                    <OpdQueuePage />
+                  </RequirePermission>
+                }
+              />
+              <Route
+                path="/opd/:encounterId"
+                element={
+                  <RequirePermission permission="consultation.manage">
+                    <OpdWorkspacePage />
                   </RequirePermission>
                 }
               />

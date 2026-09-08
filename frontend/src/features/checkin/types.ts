@@ -35,3 +35,20 @@ export interface CheckInResult {
   encounter: EncounterSummary
   queue_token: QueueTokenSummary
 }
+
+export const ACTIVE_QUEUE_STATUSES = ['WAITING', 'CALLED', 'IN_PROGRESS'] as const
+
+export interface QueueListResponse {
+  items: QueueTokenSummary[]
+  total: number
+  limit: number
+  offset: number
+}
+
+export interface QueueSearchParams {
+  branchId?: string
+  doctorId?: string
+  status?: string
+  limit?: number
+  offset?: number
+}

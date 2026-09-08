@@ -1,0 +1,62 @@
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import {
+  completeConsultation,
+  issuePrescription,
+  searchConsultationsByEncounter,
+  startConsultation,
+  updateConsultation,
+} from '@/features/consultations/api'
+import type {
+  ConsultationStartRequest,
+  ConsultationUpdateRequest,
+  PrescriptionCreateRequest,
+} from '@/features/consultations/types'
+
+export function useConsultationByEncounter(encounterId: string | undefined) {
+  return useQuery({
+    queryKey: ['consultations', 'by-encounter', encounterId],
+    queryFn: () => searchConsultationsByEncounter(encounterId!),
+    enabled: Boolean(encounterId),
+    select: (data) => data.items[0] ?? null,
+  })
+}
+
+export function useStartConsultation() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (payload: ConsultationStartRequest) => startConsultation(payload),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['consultations'] })
+      void queryClient.invalidateQueries({ queryKey: ['encounters'] })
+    },
+  })
+}
+
+export function useUpdateConsultation() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ consultationId, payload }: { consultationId: string; payload: ConsultationUpdateRequest }) =>
+      updateConsultation(consultationId, payload),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['consultations'] })
+    },
+  })
+}
+
+export function useCompleteConsultation() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (consultationId: string) => completeConsultation(consultationId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['consultations'] })
+      void queryClient.invalidateQueries({ queryKey: ['encounters'] })
+      void queryClient.invalidateQueries({ queryKey: ['queue'] })
+    },
+  })
+}
+
+export function useIssuePrescription() {
+  return useMutation({
+    mutationFn: (payload: PrescriptionCreateRequest) => issuePrescription(payload),
+  })
+}
