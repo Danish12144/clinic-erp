@@ -12,7 +12,7 @@ This repo pivoted from a single-tenant demo scaffold to **Clinic ERP + CRM**, a 
 **Everything else describing "the system" predates this pivot and is superseded — do not trust it as current behavior:**
 - `README.md`, `docs/architecture.md`, `docs/database-schema.md`, `docs/api-spec.md` describe the original single-tenant demo's intended design.
 - `backend-legacy-node-scaffold/` is the original Node/Express/TypeScript backend, preserved (renamed, not deleted) when the new Python/FastAPI backend replaced it in `backend/`. Nothing in it is wired to anything current.
-- `frontend/` still holds the original single-tenant React/Vite demo UI (a single `App.tsx` with hardcoded mock data). The new SaaS frontend has not been started — building it is explicitly out of scope until the backend is far enough along (per direct instruction from the project owner).
+- `frontend-legacy-demo/` is the original single-tenant React/Vite demo UI (a single `App.tsx` with hardcoded mock data) — preserved (renamed, not deleted) the same way `backend-legacy-node-scaffold/` was, when the new SaaS frontend scaffold took over the `frontend/` directory name. Nothing in it is wired to anything current.
 
 **Build order is strict and incremental, one module at a time**, following `docs/PRD-ARCHITECTURE.md` §10's module list — each module gets Models, Schemas, Repository, Service, Router, and Tests (unit + integration + tenant-isolation) before the next one starts. Do not start a new module without being asked to.
 
@@ -48,9 +48,11 @@ This repo pivoted from a single-tenant demo scaffold to **Clinic ERP + CRM**, a 
 | ABHA/ABDM Preparedness | ✅ Done — `backend/app/modules/patients/`, migration `0027`. Two nullable columns, `patients.abha_id`/`patients.abha_address` — deliberately lighter than the PRD's own reserved `AbhaLink` sketch (no consent-artifact/link-history table), since this task asked only for feature-flagged preparedness. A new `features.abdm_enabled` TenantSetting (reusing the exact generic mechanism Lab/Pharmacy already established — no new column for the flag itself) gates *writing* a non-null value to either column at the service layer (422 if attempted while disabled) — "small clinics keep it off with zero clutter" is real validation, not just a frontend hint. Reading the fields back is never gated |
 | Everything else (generic Documents beyond the 4 wired owner-types, real gateway/SMS/WhatsApp providers, real ABDM integration, real S3/R2 backend, background job queue, ...) | Not started |
 
+**Frontend status: scaffolding only (Step 6 of the build plan), not yet building real pages.** `frontend/` is a fresh Vite + React 19 + TypeScript app — React Router, TanStack Query v5, React Hook Form + Zod, Axios, Tailwind CSS v4, and shadcn/ui (`base-nova` style, built on `@base-ui/react` rather than Radix — see architecture notes below) are all wired and a `npm run build` passes clean. It has an `AuthProvider` (`src/features/auth/auth-context.tsx`) backed by a real Axios client with JWT request/response interceptors (`src/lib/api-client.ts`) that talks to the actual backend auth endpoints, plus two placeholder pages (`LoginPage`, `DashboardPage`) and a `RequireAuth` route guard — enough to prove the whole skeleton works end to end, not a real app yet. **Do not start building real feature pages/screens without being asked** — same incremental, one-piece-at-a-time discipline the backend followed.
+
 ## Commands
 
-Run from `backend/` unless noted. There is no root-level command runner — this is a from-scratch Python backend, unrelated to the old root `package.json`.
+Backend commands run from `backend/` unless noted; frontend commands run from `frontend/` (see below). There is no root-level command runner — this is a from-scratch Python backend + Vite frontend, unrelated to the old root `package.json`.
 
 ```bash
 # One-time setup
@@ -78,7 +80,21 @@ docker compose -f docker-compose.test.yml up -d
 
 **Port 5432 is occupied by a native Postgres service on this dev machine** (not Docker) — `docker-compose.test.yml` maps the test container to host port **5433**, and `.env.example`/`.env` point at 5433 accordingly. Don't "fix" this back to 5432 without checking what's actually listening there first (`netstat -ano | grep 5432`).
 
-There is no linter configured yet.
+There is no linter configured for the backend yet.
+
+```bash
+# One-time setup
+cd frontend
+npm install
+cp .env.example .env   # VITE_API_BASE_URL, defaults to http://localhost:8000 (no /api/v1 suffix — the client appends it)
+
+# Dev server — fixed to port 3000 (see architecture notes: matches backend's default CORS_ORIGINS)
+npm run dev
+
+# Build (tsc -b && vite build) and lint (oxlint)
+npm run build
+npm run lint
+```
 
 ## Architecture notes — things that aren't obvious from reading one file
 
@@ -259,3 +275,23 @@ The mechanism's Python home moved once it needed a second caller: migration `000
 **Prescription PDF's `_generate_and_store_prescription_pdf` calls three other repositories it doesn't otherwise need (`PatientRepository`, `UserRepository`, `MedicineRepository`) purely to resolve display names/labels for the rendered document — this is the correct amount of coupling for a rendering helper, not scope creep.** A PDF a patient/doctor actually reads needs a real patient name and doctor name, not raw UUIDs; a prescription item's `medicine_name_freetext` is only ever populated for non-catalog medicines (the DB `CHECK` requires exactly one of `medicine_id`/`medicine_name_freetext`), so a catalog-linked item genuinely has no display name anywhere else in the already-fetched data and must be looked up. Don't "simplify" this by dropping the catalog lookup and just printing a medicine_id — that would ship a prescription no one asked for.
 
 **`app/modules/files/service.py::store_generated_document` deliberately bypasses `FileService.upload`'s own per-`owner_type` permission dispatch — this is not an oversight, it's why `PRESCRIPTION_PDF` is only ever in `_READ_PERMISSION_BY_OWNER_TYPE`, never `_WRITE_PERMISSION_BY_OWNER_TYPE`.** The generic upload endpoint's permission check exists to authorize an *end user's* upload request; a server-generated PDF isn't an upload request at all, it's the trusted output of a business action (`issue_prescription`) whose own authorization (Doctor issuing their own prescription, or Owner) already happened upstream. Checking a permission a second time here would be redundant at best and wrong at worst (there's no natural "permission to upload a PRESCRIPTION_PDF" for a caller to hold, since the caller isn't the one deciding to create it — the business logic is). If a future server-generated document type is added, give it the same treatment: a free function that calls the storage backend + `DocumentRepository` directly, not a call through `FileService.upload`.
+
+## Frontend architecture notes
+
+**Frontend scaffolding (Step 6) pivoted `frontend/` from the old single-tenant demo to a fresh Vite app rather than trying to evolve the demo in place — same "rename, don't delete or mutate" precedent as `backend-legacy-node-scaffold/`.** The demo now lives at `frontend-legacy-demo/`, untouched and unreferenced by anything current. `frontend/package.json`'s `dev`/`build`/`test` script names were kept identical to what the demo had, so the root `package.json`'s `npm --prefix frontend run dev/build/test` still works unchanged — no root-level script needed updating.
+
+**Tailwind is v4, configured CSS-first — there is no `tailwind.config.js` anywhere in `frontend/`, by design, not an oversight.** `@tailwindcss/vite` is a Vite plugin (`vite.config.ts`), and every design token (colors, radius) lives as CSS custom properties directly in `src/index.css` under `@theme inline`/`:root`/`.dark` — this is Tailwind v4's own recommended setup, not a simplification. Don't add a `tailwind.config.ts` "to be safe"; it won't be picked up by `@tailwindcss/vite` and would just be dead weight.
+
+**shadcn/ui here is the `base-nova` style, built on `@base-ui/react` (MUI's unstyled primitives library), not the classic Radix UI + hand-rolled `cn()` combo most shadcn docs/tutorials still show.** This is whatever `npx shadcn@latest init` resolved to at scaffold time (2026-09) — the CLI's registry has moved on from Radix as the default primitive layer. `cn()` itself is imported from the `cn` npm package (`src/lib/utils.ts` just re-exports it), not hand-written with `clsx`+`tailwind-merge` the older way, even though both of those are still installed as `cn`'s own dependencies. When adding a new shadcn component, always use `npx shadcn@latest add <name>` rather than hand-copying an older Radix-based example off the docs site — the generated code imports from `@base-ui/react/*`, and a hand-copied Radix version simply won't match this project's primitive layer.
+
+**The `@/*` path alias needs configuring in three places to actually work, and TypeScript 6.0 deprecated `baseUrl`** — `tsconfig.json`/`tsconfig.app.json`'s `compilerOptions.paths` (for the TS compiler and editor tooling) and `vite.config.ts`'s `resolve.alias` (for Vite's own bundling, which doesn't read tsconfig `paths` at all) both need the same mapping; `baseUrl` was deliberately left out of both tsconfig files (TS 6's `moduleResolution: "bundler"` resolves `paths` relative to the tsconfig file itself without it) — adding `baseUrl` back in would just reintroduce `TS5101`'s deprecation error at build time.
+
+**The frontend dev server is pinned to port 3000 (`vite.config.ts`'s `server.port`), not Vite's own default 5173 — to match the backend's existing `CORS_ORIGINS` default (`["http://localhost:3000"]`, `backend/app/core/config.py`) without touching backend config for a frontend-only concern.** If a future need (running both the legacy demo and the new app simultaneously, e.g.) forces a different frontend port, update `backend/.env`'s `CORS_ORIGINS` rather than fighting over port 3000 — don't silently let CORS start failing.
+
+**The Axios client (`src/lib/api-client.ts`) and its token storage (`src/lib/token-storage.ts`) persist `clinic_slug` alongside the access/refresh tokens — not just the two tokens — because the backend's own `staff/refresh` and `staff/logout` endpoints require `clinic_slug` in the request body, not just a bearer token** (see `backend/app/modules/auth/schemas.py`'s `RefreshRequest`/`LogoutRequest` — there's no subdomain-based tenant resolution in this codebase yet, so the slug has to come from somewhere client-side once the original login form is gone). A session is only considered "present" (`getStoredSession()`) when all three values exist together; losing any one of them is treated as no session at all. **Whoever builds the real login screen must keep collecting/persisting `clinic_slug` at login time** — don't "simplify" it away as redundant with the JWT without checking this constraint first.
+
+**401 handling coalesces concurrent failures onto a single in-flight refresh call, and talks to the refresh endpoint through a bare second Axios instance (`refreshClient`) instead of `apiClient` itself, to avoid the response interceptor recursing into itself.** A request whose URL is in `AUTH_EXEMPT_PATHS` (login, refresh, OTP request/verify, accept-invite) never gets a bearer token attached and never triggers the refresh-and-retry dance on a 401 — a 401 from one of those endpoints is the real, final answer (wrong password, expired OTP), not a stale-access-token situation to paper over.
+
+**Session expiry is communicated out of the Axios layer via a plain `window` custom event (`src/lib/auth-events.ts`), not a callback injected into the client or a shared store import, specifically so `api-client.ts` has zero dependency on React/React Router.** `AuthProvider` is the only subscriber (`onSessionExpired(clearSession)`); a failed refresh clears storage and fires the event, `AuthProvider` reacts by dropping to `unauthenticated`, and `RequireAuth` (`src/routes/require-auth.tsx`) is what actually performs the `<Navigate to="/login">` redirect — the interceptor itself never touches routing.
+
+**`LoginPage`/`DashboardPage` (`src/pages/`) are placeholders proving the skeleton wires together end to end (real login against the actual backend, real permission list rendering, real logout) — not the start of the real page-by-page build.** Don't extend either of these into real screens without being asked; the next step is a deliberate, reviewed decision about actual page/module scaffolding (staff directory, patient search, appointments calendar, ...), same incremental discipline as every backend module.
