@@ -1,4 +1,5 @@
 import { zodResolver } from '@hookform/resolvers/zod'
+import { Stethoscope } from 'lucide-react'
 import { useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { Navigate, useLocation, useNavigate } from 'react-router-dom'
@@ -45,36 +46,44 @@ export function LoginPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-muted/40 p-4">
-      <Card className="w-full max-w-sm">
-        <CardHeader>
-          <CardTitle>Clinic staff sign in</CardTitle>
-          <CardDescription>Enter your clinic slug and credentials.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form className="flex flex-col gap-4" onSubmit={handleSubmit(onSubmit)} noValidate>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="clinicSlug">Clinic slug</Label>
-              <Input id="clinicSlug" autoComplete="organization" {...register('clinicSlug')} />
-              {errors.clinicSlug && <p className="text-sm text-destructive">{errors.clinicSlug.message}</p>}
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="identifier">Email or phone</Label>
-              <Input id="identifier" autoComplete="username" {...register('identifier')} />
-              {errors.identifier && <p className="text-sm text-destructive">{errors.identifier.message}</p>}
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="password">Password</Label>
-              <Input id="password" type="password" autoComplete="current-password" {...register('password')} />
-              {errors.password && <p className="text-sm text-destructive">{errors.password.message}</p>}
-            </div>
-            {serverError && <p className="text-sm text-destructive">{serverError}</p>}
-            <Button type="submit" disabled={isSubmitting} className="mt-2">
-              {isSubmitting ? 'Signing in…' : 'Sign in'}
-            </Button>
-          </form>
-        </CardContent>
-      </Card>
+    <div className="flex min-h-screen items-center justify-center bg-slate-50 p-4 dark:bg-slate-900">
+      <div className="flex w-full max-w-sm flex-col items-center gap-6">
+        <div className="flex items-center gap-2.5">
+          <div className="flex size-9 items-center justify-center rounded-lg bg-indigo-600 text-white shadow-sm">
+            <Stethoscope className="size-5" />
+          </div>
+          <span className="text-base font-semibold tracking-tight text-slate-900 dark:text-slate-50">Clinic ERP</span>
+        </div>
+        <Card className="w-full">
+          <CardHeader>
+            <CardTitle>Clinic staff sign in</CardTitle>
+            <CardDescription>Enter your clinic slug and credentials.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form className="flex flex-col gap-4" onSubmit={handleSubmit(onSubmit)} noValidate>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="clinicSlug">Clinic slug</Label>
+                <Input id="clinicSlug" autoComplete="organization" {...register('clinicSlug')} />
+                {errors.clinicSlug && <p className="text-sm text-destructive">{errors.clinicSlug.message}</p>}
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="identifier">Email or phone</Label>
+                <Input id="identifier" autoComplete="username" {...register('identifier')} />
+                {errors.identifier && <p className="text-sm text-destructive">{errors.identifier.message}</p>}
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="password">Password</Label>
+                <Input id="password" type="password" autoComplete="current-password" {...register('password')} />
+                {errors.password && <p className="text-sm text-destructive">{errors.password.message}</p>}
+              </div>
+              {serverError && <p className="text-sm text-destructive">{serverError}</p>}
+              <Button type="submit" disabled={isSubmitting} className="mt-2">
+                {isSubmitting ? 'Signing in…' : 'Sign in'}
+              </Button>
+            </form>
+          </CardContent>
+        </Card>
+      </div>
     </div>
   )
 }

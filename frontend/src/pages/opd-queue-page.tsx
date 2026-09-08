@@ -1,6 +1,8 @@
-import { ArrowRight, Loader2, Play, RefreshCw } from 'lucide-react'
+import { ArrowRight, ClipboardList, Loader2, Play, RefreshCw } from 'lucide-react'
 import { toast } from 'sonner'
 import { useNavigate } from 'react-router-dom'
+import { EmptyState } from '@/components/shared/empty-state'
+import { StatusBadge } from '@/components/shared/status-badge'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -9,12 +11,6 @@ import { useAuth } from '@/features/auth/auth-context'
 import { useStartConsultation } from '@/features/consultations/hooks'
 import { useDoctorOpdQueue, type OpdQueueRow } from '@/features/opd/use-doctor-queue'
 import { getErrorMessage } from '@/lib/errors'
-
-const QUEUE_STATUS_VARIANT: Record<string, string> = {
-  WAITING: 'bg-slate-100 text-slate-700 dark:bg-slate-500/15 dark:text-slate-300',
-  CALLED: 'bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300',
-  IN_PROGRESS: 'bg-blue-100 text-blue-800 dark:bg-blue-500/15 dark:text-blue-300',
-}
 
 function formatAge(dateOfBirth: string | null | undefined): string {
   if (!dateOfBirth) return ''
@@ -27,7 +23,7 @@ function QueueActionCell({ row }: { row: OpdQueueRow }) {
   const startConsultation = useStartConsultation()
 
   if (!row.encounter) {
-    return <Loader2 className="size-4 animate-spin text-muted-foreground" />
+    return <Loader2 className="size-4 animate-spin text-slate-400" />
   }
 
   if (row.encounter.status === 'IN_CONSULTATION') {
@@ -61,7 +57,7 @@ function QueueActionCell({ row }: { row: OpdQueueRow }) {
   }
 
   return (
-    <Badge variant="outline" className="text-muted-foreground">
+    <Badge variant="outline" className="text-slate-500">
       {row.encounter.status}
     </Badge>
   )
@@ -75,8 +71,8 @@ export function OpdQueuePage() {
     <div className="flex flex-col gap-4 p-4 sm:p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold">OPD Queue</h1>
-          <p className="text-sm text-muted-foreground">Your active patients today. Refreshes automatically.</p>
+          <h1 className="text-xl font-semibold text-slate-900 dark:text-slate-50">OPD Queue</h1>
+          <p className="text-sm text-slate-500 dark:text-slate-400">Your active patients today. Refreshes automatically.</p>
         </div>
         <Button variant="outline" size="sm" className="gap-1.5" onClick={() => void refetch()}>
           <RefreshCw className={`size-3.5 ${isFetching ? 'animate-spin' : ''}`} />
@@ -84,7 +80,7 @@ export function OpdQueuePage() {
         </Button>
       </div>
 
-      <div className="rounded-lg border border-border bg-card">
+      <div className="rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
         <Table>
           <TableHeader>
             <TableRow>
@@ -108,9 +104,13 @@ export function OpdQueuePage() {
               ))}
 
             {!isLoading && rows.length === 0 && (
-              <TableRow>
-                <TableCell colSpan={5} className="py-8 text-center text-sm text-muted-foreground">
-                  No patients waiting in your queue right now.
+              <TableRow className="hover:bg-transparent">
+                <TableCell colSpan={5}>
+                  <EmptyState
+                    icon={ClipboardList}
+                    title="No patients waiting"
+                    description="Your queue is empty right now — checked-in patients assigned to you will show up here."
+                  />
                 </TableCell>
               </TableRow>
             )}
@@ -118,21 +118,21 @@ export function OpdQueuePage() {
             {!isLoading &&
               rows.map((row) => (
                 <TableRow key={row.token.id}>
-                  <TableCell className="font-mono font-medium">#{row.token.token_number}</TableCell>
-                  <TableCell className="font-medium">
+                  <TableCell className="font-mono font-medium text-slate-900 dark:text-slate-100">
+                    #{row.token.token_number}
+                  </TableCell>
+                  <TableCell className="font-medium text-slate-900 dark:text-slate-100">
                     {row.patient ? (
                       [row.patient.first_name, row.patient.last_name].filter(Boolean).join(' ')
                     ) : (
                       <Skeleton className="h-4 w-28" />
                     )}
                   </TableCell>
-                  <TableCell className="text-muted-foreground">
+                  <TableCell className="text-slate-500 dark:text-slate-400">
                     {row.patient ? `${formatAge(row.patient.date_of_birth)} ${row.patient.gender ?? ''}`.trim() || '—' : ''}
                   </TableCell>
                   <TableCell>
-                    <Badge variant="outline" className={`border-transparent ${QUEUE_STATUS_VARIANT[row.token.status] ?? ''}`}>
-                      {row.token.status}
-                    </Badge>
+                    <StatusBadge status={row.token.status} />
                   </TableCell>
                   <TableCell className="text-right">
                     <QueueActionCell row={row} />

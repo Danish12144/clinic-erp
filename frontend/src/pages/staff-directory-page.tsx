@@ -1,8 +1,9 @@
-import { UserPlus } from 'lucide-react'
+import { UserPlus, UsersRound } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { RoleBadge } from '@/components/staff/role-badge'
 import { InviteStaffDialog } from '@/components/staff/invite-staff-dialog'
-import { Badge } from '@/components/ui/badge'
+import { EmptyState } from '@/components/shared/empty-state'
+import { StatusBadge } from '@/components/shared/status-badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -56,8 +57,8 @@ export function StaffDirectoryPage() {
     <div className="flex flex-col gap-4 p-4 sm:p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold">Staff Directory</h1>
-          <p className="text-sm text-muted-foreground">All clinic staff, including doctors.</p>
+          <h1 className="text-xl font-semibold text-slate-900 dark:text-slate-50">Staff Directory</h1>
+          <p className="text-sm text-slate-500 dark:text-slate-400">All clinic staff, including doctors.</p>
         </div>
         <Button onClick={() => setDialogOpen(true)} className="gap-1.5">
           <UserPlus className="size-4" />
@@ -72,7 +73,7 @@ export function StaffDirectoryPage() {
         className="max-w-sm"
       />
 
-      <div className="rounded-lg border border-border bg-card">
+      <div className="rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
         <Table>
           <TableHeader>
             <TableRow>
@@ -97,9 +98,13 @@ export function StaffDirectoryPage() {
               ))}
 
             {!isLoading && rows.length === 0 && (
-              <TableRow>
-                <TableCell colSpan={6} className="py-8 text-center text-sm text-muted-foreground">
-                  No staff found.
+              <TableRow className="hover:bg-transparent">
+                <TableCell colSpan={6}>
+                  <EmptyState
+                    icon={UsersRound}
+                    title="No staff found"
+                    description="Try a different search, or invite a new staff member to get started."
+                  />
                 </TableCell>
               </TableRow>
             )}
@@ -107,15 +112,15 @@ export function StaffDirectoryPage() {
             {!isLoading &&
               rows.map((row) => (
                 <TableRow key={row.userId}>
-                  <TableCell className="font-medium">{row.name}</TableCell>
+                  <TableCell className="font-medium text-slate-900 dark:text-slate-100">{row.name}</TableCell>
                   <TableCell>
                     <RoleBadge roleCode={row.roleCode} />
                   </TableCell>
-                  <TableCell className="text-muted-foreground">{row.detail ?? '—'}</TableCell>
-                  <TableCell>{row.email ?? '—'}</TableCell>
-                  <TableCell>{row.phone ?? '—'}</TableCell>
+                  <TableCell className="text-slate-500 dark:text-slate-400">{row.detail ?? '—'}</TableCell>
+                  <TableCell className="text-slate-600 dark:text-slate-400">{row.email ?? '—'}</TableCell>
+                  <TableCell className="text-slate-600 dark:text-slate-400">{row.phone ?? '—'}</TableCell>
                   <TableCell>
-                    <Badge variant={row.status === 'ACTIVE' ? 'secondary' : 'outline'}>{row.status}</Badge>
+                    <StatusBadge status={row.status} />
                   </TableCell>
                 </TableRow>
               ))}

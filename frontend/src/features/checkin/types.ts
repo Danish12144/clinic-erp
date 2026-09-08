@@ -52,3 +52,20 @@ export interface QueueSearchParams {
   limit?: number
   offset?: number
 }
+
+export interface EncounterListResponse {
+  items: EncounterSummary[]
+  total: number
+  limit: number
+  offset: number
+}
+
+export interface EncounterSearchParams {
+  branchId?: string
+  patientId?: string
+  status?: string
+  dateFrom?: string
+  dateTo?: string
+  limit?: number
+  offset?: number
+}

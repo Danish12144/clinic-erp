@@ -1,6 +1,8 @@
 import { apiClient } from '@/lib/api-client'
 import type {
   CheckInResult,
+  EncounterListResponse,
+  EncounterSearchParams,
   EncounterSummary,
   QueueListResponse,
   QueueSearchParams,
@@ -10,6 +12,21 @@ import type {
 
 export async function registerWalkIn(payload: WalkInRequest): Promise<CheckInResult> {
   const { data } = await apiClient.post<CheckInResult>('/encounters/walk-in', payload)
+  return data
+}
+
+export async function searchEncounters(params: EncounterSearchParams): Promise<EncounterListResponse> {
+  const { data } = await apiClient.get<EncounterListResponse>('/encounters', {
+    params: {
+      branch_id: params.branchId || undefined,
+      patient_id: params.patientId || undefined,
+      status: params.status || undefined,
+      date_from: params.dateFrom || undefined,
+      date_to: params.dateTo || undefined,
+      limit: params.limit ?? 20,
+      offset: params.offset ?? 0,
+    },
+  })
   return data
 }
 

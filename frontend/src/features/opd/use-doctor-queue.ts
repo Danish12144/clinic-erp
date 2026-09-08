@@ -6,6 +6,7 @@ import { getPatient } from '@/features/patients/api'
 import type { PatientSummary } from '@/features/patients/types'
 import type { EncounterSummary, QueueTokenSummary } from '@/features/checkin/types'
 import { searchQueue } from '@/features/checkin/api'
+import { todayLocalDate } from '@/lib/date'
 
 export interface OpdQueueRow {
   token: QueueTokenSummary
@@ -15,14 +16,6 @@ export interface OpdQueueRow {
 }
 
 const POLL_INTERVAL_MS = 15_000
-
-function todayLocalDate(): string {
-  const now = new Date()
-  const yyyy = now.getFullYear()
-  const mm = String(now.getMonth() + 1).padStart(2, '0')
-  const dd = String(now.getDate()).padStart(2, '0')
-  return `${yyyy}-${mm}-${dd}`
-}
 
 // There's no single backend endpoint that returns "today's queue with
 // patient names" — QueueTokenSummary only has encounter_id, and
