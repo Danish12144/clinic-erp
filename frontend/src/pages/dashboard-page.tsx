@@ -1,31 +1,42 @@
-import { Activity, ClipboardList, Stethoscope, UserPlus, Users } from 'lucide-react'
+import { CheckCircle2, ClipboardList, Footprints, Ticket, UserCog, UserPlus, Users } from 'lucide-react'
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
 import { MetricCard } from '@/components/dashboard/metric-card'
+import { InviteStaffDialog } from '@/components/staff/invite-staff-dialog'
+import { IssueTokenDialog } from '@/components/patients/issue-token-dialog'
 import { NewPatientDialog } from '@/components/patients/new-patient-dialog'
-import { StatusBadge } from '@/components/shared/status-badge'
 import { EmptyState } from '@/components/shared/empty-state'
+import { StatusBadge } from '@/components/shared/status-badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useAuth } from '@/features/auth/auth-context'
 import { useDashboardMetrics } from '@/features/dashboard/use-dashboard-metrics'
-import { useRecentActivity } from '@/features/dashboard/use-recent-activity'
+import { useLiveQueueSnapshot } from '@/features/dashboard/use-live-queue-snapshot'
+import { useRecentRegistrations } from '@/features/dashboard/use-recent-registrations'
 
-function formatTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+function formatRelativeTime(iso: string): string {
+  const diffMs = Date.now() - new Date(iso).getTime()
+  const minutes = Math.floor(diffMs / 60_000)
+  if (minutes < 1) return 'just now'
+  if (minutes < 60) return `${minutes}m ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}h ago`
+  return new Date(iso).toLocaleDateString()
 }
 
 export function DashboardPage() {
   const { user, hasPermission } = useAuth()
-  const navigate = useNavigate()
   const metrics = useDashboardMetrics()
-  const { rows: recentRows, isLoading: recentLoading, enabled: canViewActivity } = useRecentActivity()
+  const queueSnapshot = useLiveQueueSnapshot()
+  const recentRegistrations = useRecentRegistrations()
+
   const [registerOpen, setRegisterOpen] = useState(false)
+  const [issueTokenOpen, setIssueTokenOpen] = useState(false)
+  const [addStaffOpen, setAddStaffOpen] = useState(false)
 
   const canRegister = hasPermission('patients.register')
-  const canViewOpd = hasPermission('consultation.manage')
-  const canViewStaff = hasPermission('staff.manage')
+  const canIssueToken = hasPermission('checkin.manage') && hasPermission('patients.view_demographics')
+  const canAddStaff = hasPermission('staff.manage')
 
   return (
     <div className="flex flex-col gap-6 p-4 sm:p-6">
@@ -37,45 +48,45 @@ export function DashboardPage() {
       </div>
 
       <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
-        {metrics.registeredPatients.visible && (
+        {metrics.todaysFootfall.visible && (
           <MetricCard
-            label="Registered patients"
-            value={metrics.registeredPatients.value}
-            isLoading={metrics.registeredPatients.isLoading}
-            icon={Users}
+            label="Today's footfall"
+            value={metrics.todaysFootfall.value}
+            isLoading={metrics.todaysFootfall.isLoading}
+            icon={Footprints}
             accent="blue"
           />
         )}
-        {metrics.todaysVisits.visible && (
+        {metrics.completedConsultations.visible && (
           <MetricCard
-            label="Today's OPD visits"
-            value={metrics.todaysVisits.value}
-            isLoading={metrics.todaysVisits.isLoading}
-            icon={Activity}
-            accent="violet"
-          />
-        )}
-        {metrics.activeQueue.visible && (
-          <MetricCard
-            label="Active queue"
-            value={metrics.activeQueue.value}
-            isLoading={metrics.activeQueue.isLoading}
-            icon={ClipboardList}
-            accent="amber"
+            label="Completed consultations"
+            value={metrics.completedConsultations.value}
+            isLoading={metrics.completedConsultations.isLoading}
+            icon={CheckCircle2}
+            accent="emerald"
           />
         )}
         {metrics.doctorsOnDuty.visible && (
           <MetricCard
-            label="Doctors on duty"
+            label="Active doctors on duty"
             value={metrics.doctorsOnDuty.value}
             isLoading={metrics.doctorsOnDuty.isLoading}
-            icon={Stethoscope}
-            accent="emerald"
+            icon={UserCog}
+            accent="violet"
+          />
+        )}
+        {metrics.registeredPatients.visible && (
+          <MetricCard
+            label="Total registered patients"
+            value={metrics.registeredPatients.value}
+            isLoading={metrics.registeredPatients.isLoading}
+            icon={Users}
+            accent="amber"
           />
         )}
       </div>
 
-      {(canRegister || canViewOpd || canViewStaff) && (
+      {(canRegister || canIssueToken || canAddStaff) && (
         <Card>
           <CardHeader>
             <CardTitle className="text-base">Quick actions</CardTitle>
@@ -87,59 +98,99 @@ export function DashboardPage() {
                 Register walk-in
               </Button>
             )}
-            {canViewOpd && (
-              <Button variant="outline" className="gap-1.5" onClick={() => navigate('/opd')}>
-                <Stethoscope className="size-4" />
-                Write prescription
+            {canIssueToken && (
+              <Button variant="outline" className="gap-1.5" onClick={() => setIssueTokenOpen(true)}>
+                <Ticket className="size-4" />
+                Issue token
               </Button>
             )}
-            {canViewOpd && (
-              <Button variant="outline" className="gap-1.5" onClick={() => navigate('/opd')}>
-                <ClipboardList className="size-4" />
-                View queue
+            {canAddStaff && (
+              <Button variant="outline" className="gap-1.5" onClick={() => setAddStaffOpen(true)}>
+                <UserCog className="size-4" />
+                Add staff
               </Button>
             )}
           </CardContent>
         </Card>
       )}
 
-      {canViewActivity && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Recent activity</CardTitle>
-            <CardDescription>The latest patients checked in across your clinic.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            {recentLoading ? (
-              <div className="flex flex-col gap-3">
-                {Array.from({ length: 3 }).map((_, i) => (
-                  <Skeleton key={i} className="h-10 w-full" />
-                ))}
-              </div>
-            ) : recentRows.length === 0 ? (
-              <EmptyState icon={Activity} title="No activity yet" description="Check-ins will show up here as they happen." />
-            ) : (
-              <ul className="flex flex-col divide-y divide-slate-100 dark:divide-slate-800">
-                {recentRows.map(({ encounter, patient }) => (
-                  <li key={encounter.id} className="flex items-center justify-between gap-3 py-2.5 first:pt-0 last:pb-0">
-                    <div className="flex min-w-0 flex-col">
-                      <span className="truncate text-sm font-medium text-slate-900 dark:text-slate-100">
-                        {patient ? [patient.first_name, patient.last_name].filter(Boolean).join(' ') : 'Loading…'}
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+        {queueSnapshot.enabled && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Live queue</CardTitle>
+              <CardDescription>Patients currently waiting or being seen, clinic-wide.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {queueSnapshot.isLoading ? (
+                <div className="flex flex-col gap-3">
+                  {Array.from({ length: 3 }).map((_, i) => (
+                    <Skeleton key={i} className="h-10 w-full" />
+                  ))}
+                </div>
+              ) : queueSnapshot.rows.length === 0 ? (
+                <EmptyState icon={ClipboardList} title="Queue is empty" description="No patients are waiting right now." />
+              ) : (
+                <ul className="flex flex-col divide-y divide-slate-100 dark:divide-slate-800">
+                  {queueSnapshot.rows.map(({ token, patient }) => (
+                    <li key={token.id} className="flex items-center justify-between gap-3 py-2.5 first:pt-0 last:pb-0">
+                      <div className="flex items-center gap-2.5">
+                        <span className="font-mono text-sm font-medium text-slate-900 dark:text-slate-100">
+                          #{token.token_number}
+                        </span>
+                        <span className="truncate text-sm text-slate-700 dark:text-slate-300">
+                          {patient ? [patient.first_name, patient.last_name].filter(Boolean).join(' ') : <Skeleton className="h-4 w-24" />}
+                        </span>
+                      </div>
+                      <StatusBadge status={token.status} />
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
+        {recentRegistrations.enabled && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Recent registrations</CardTitle>
+              <CardDescription>The newest patients added to your clinic.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {recentRegistrations.isLoading ? (
+                <div className="flex flex-col gap-3">
+                  {Array.from({ length: 3 }).map((_, i) => (
+                    <Skeleton key={i} className="h-10 w-full" />
+                  ))}
+                </div>
+              ) : recentRegistrations.rows.length === 0 ? (
+                <EmptyState icon={Users} title="No patients yet" description="Newly registered patients will show up here." />
+              ) : (
+                <ul className="flex flex-col divide-y divide-slate-100 dark:divide-slate-800">
+                  {recentRegistrations.rows.map((patient) => (
+                    <li key={patient.id} className="flex items-center justify-between gap-3 py-2.5 first:pt-0 last:pb-0">
+                      <div className="flex min-w-0 flex-col">
+                        <span className="truncate text-sm font-medium text-slate-900 dark:text-slate-100">
+                          {[patient.first_name, patient.last_name].filter(Boolean).join(' ')}
+                        </span>
+                        <span className="text-xs text-slate-500 dark:text-slate-400">MRN {patient.mrn}</span>
+                      </div>
+                      <span className="shrink-0 text-xs text-slate-500 dark:text-slate-400">
+                        {formatRelativeTime(patient.created_at)}
                       </span>
-                      <span className="text-xs text-slate-500 dark:text-slate-400">
-                        Checked in at {formatTime(encounter.checked_in_at)}
-                      </span>
-                    </div>
-                    <StatusBadge status={encounter.status} />
-                  </li>
-                ))}
-              </ul>
-            )}
-          </CardContent>
-        </Card>
-      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </CardContent>
+          </Card>
+        )}
+      </div>
 
       <NewPatientDialog open={registerOpen} onOpenChange={setRegisterOpen} />
+      <IssueTokenDialog open={issueTokenOpen} onOpenChange={setIssueTokenOpen} />
+      <InviteStaffDialog open={addStaffOpen} onOpenChange={setAddStaffOpen} />
     </div>
   )
 }

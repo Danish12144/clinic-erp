@@ -16,10 +16,10 @@ export interface DashboardMetric {
 // endpoint requires — a caller missing one just doesn't see that card,
 // same permission-driven-UI convention as the rest of this app. There is
 // no single "dashboard summary" backend endpoint; each metric is derived
-// from an existing search endpoint's `total` (or, for Active Queue/
-// Doctors on Duty, computed client-side from one shared queue fetch —
-// see features/opd/use-doctor-queue.ts for the same join-and-filter
-// pattern applied to a single doctor instead of the whole tenant).
+// from an existing search endpoint's `total` (or, for Doctors on Duty,
+// computed client-side from one shared queue fetch — see
+// features/opd/use-doctor-queue.ts for the same join-and-filter pattern
+// applied to a single doctor instead of the whole tenant).
 export function useDashboardMetrics() {
   const { hasPermission } = useAuth()
   const canViewPatients = hasPermission('patients.view_demographics')
@@ -41,9 +41,16 @@ export function useDashboardMetrics() {
   })
 
   const { start, end } = useMemo(() => todayLocalRange(), [])
-  const visitsQuery = useQuery({
-    queryKey: ['dashboard', 'visits-today', start, end],
+
+  const footfallQuery = useQuery({
+    queryKey: ['dashboard', 'footfall-today', start, end],
     queryFn: () => searchEncounters({ dateFrom: start, dateTo: end, limit: 1 }),
+    enabled: canViewEncounters,
+  })
+
+  const completedQuery = useQuery({
+    queryKey: ['dashboard', 'completed-today', start, end],
+    queryFn: () => searchEncounters({ dateFrom: start, dateTo: end, status: 'COMPLETED', limit: 1 }),
     enabled: canViewEncounters,
   })
 
@@ -65,14 +72,14 @@ export function useDashboardMetrics() {
     isLoading: patientsQuery.isLoading,
     visible: canViewPatients,
   }
-  const activeQueue: DashboardMetric = {
-    value: canViewQueue ? activeTokens.length : undefined,
-    isLoading: queueQuery.isLoading,
-    visible: canViewQueue,
+  const todaysFootfall: DashboardMetric = {
+    value: footfallQuery.data?.total,
+    isLoading: footfallQuery.isLoading,
+    visible: canViewEncounters,
   }
-  const todaysVisits: DashboardMetric = {
-    value: visitsQuery.data?.total,
-    isLoading: visitsQuery.isLoading,
+  const completedConsultations: DashboardMetric = {
+    value: completedQuery.data?.total,
+    isLoading: completedQuery.isLoading,
     visible: canViewEncounters,
   }
   const doctorsOnDutyMetric: DashboardMetric = {
@@ -81,5 +88,5 @@ export function useDashboardMetrics() {
     visible: canViewQueue,
   }
 
-  return { registeredPatients, activeQueue, todaysVisits, doctorsOnDuty: doctorsOnDutyMetric }
+  return { registeredPatients, todaysFootfall, completedConsultations, doctorsOnDuty: doctorsOnDutyMetric }
 }
