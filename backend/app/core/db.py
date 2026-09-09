@@ -29,6 +29,21 @@ from app.core.config import get_settings
 
 settings = get_settings()
 
+# Disables asyncpg's per-connection server-side prepared-statement cache.
+# Required whenever DATABASE_URL might point at a PgBouncer transaction-
+# pooling endpoint (e.g. Neon's "-pooler" hostname, the recommended
+# endpoint for a multi-worker deploy since it multiplexes many app-level
+# connections onto few real Postgres backend connections) — in that mode
+# a session's underlying backend connection can change between statements,
+# so a prepared statement asyncpg cached against one backend connection
+# can vanish out from under it on the next query, surfacing as an
+# intermittent "prepared statement ... does not exist" under concurrent
+# load, not a reliably reproducible local bug. Harmless against a direct
+# (non-pooled) endpoint too — the cache is a minor throughput optimization
+# this app's CRUD-shaped query load doesn't meaningfully depend on — so
+# it's set unconditionally rather than only when a pooler URL is detected.
+_ASYNC_CONNECT_ARGS = {"statement_cache_size": 0}
+
 if settings.environment == "test":
     # pytest-asyncio gives each test its own event loop by default;
     # asyncpg connections are bound to the loop they were opened on, so a
@@ -37,9 +52,9 @@ if settings.environment == "test":
     # "Event loop is closed" / AttributeError on teardown). NullPool opens
     # a fresh connection per session instead of reusing one from a pool,
     # sidestepping the mismatch. Real deployments keep normal pooling.
-    engine = create_async_engine(settings.database_url, poolclass=NullPool, future=True)
+    engine = create_async_engine(settings.database_url, poolclass=NullPool, connect_args=_ASYNC_CONNECT_ARGS, future=True)
 else:
-    engine = create_async_engine(settings.database_url, pool_pre_ping=True, future=True)
+    engine = create_async_engine(settings.database_url, pool_pre_ping=True, connect_args=_ASYNC_CONNECT_ARGS, future=True)
 
 SessionLocal = async_sessionmaker(bind=engine, expire_on_commit=False, autoflush=False)
 

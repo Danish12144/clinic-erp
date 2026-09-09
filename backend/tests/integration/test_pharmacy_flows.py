@@ -115,11 +115,23 @@ async def test_doctor_can_view_but_not_create_medicines(api_client: AsyncClient,
     assert write.status_code == 403
 
 
-async def test_receptionist_and_nurse_have_no_pharmacy_access(api_client: AsyncClient, login_as) -> None:
-    for role in ("RECEPTIONIST", "NURSE"):
-        headers, _ = await login_as(role_code=role)
-        read = await api_client.get("/api/v1/pharmacy/medicines", headers=headers)
-        assert read.status_code == 403
+async def test_nurse_has_no_pharmacy_access(api_client: AsyncClient, login_as) -> None:
+    headers, _ = await login_as(role_code="NURSE")
+    read = await api_client.get("/api/v1/pharmacy/medicines", headers=headers)
+    assert read.status_code == 403
+
+
+async def test_receptionist_can_view_catalog_but_not_create_medicines(api_client: AsyncClient, login_as) -> None:
+    # Migration 0029 deliberately granted Receptionist pharmacy.view_catalog
+    # (read-only) so the OTC sales screen can search what it's selling —
+    # see that migration's docstring. Receptionist still has no write
+    # access to the catalog itself (pharmacy.manage_catalog stays
+    # Owner/Pharmacy Staff only).
+    headers, _ = await login_as(role_code="RECEPTIONIST")
+    read = await api_client.get("/api/v1/pharmacy/medicines", headers=headers)
+    assert read.status_code == 200
+    write = await api_client.post("/api/v1/pharmacy/medicines", json={"name": "x"}, headers=headers)
+    assert write.status_code == 403
 
 
 async def test_duplicate_sku_is_rejected(api_client: AsyncClient, owner_headers: dict[str, str]) -> None:
