@@ -7,6 +7,8 @@ import { AuthProvider } from '@/features/auth/auth-context'
 import { AppointmentsPage } from '@/pages/appointments-page'
 import { BillingPage } from '@/pages/billing-page'
 import { DashboardPage } from '@/pages/dashboard-page'
+import { ExpensesPage } from '@/pages/expenses-page'
+import { InventoryPage } from '@/pages/inventory-page'
 import { InvoiceDetailPage } from '@/pages/invoice-detail-page'
 import { LabCatalogPage } from '@/pages/lab-catalog-page'
 import { LabOrderDetailPage } from '@/pages/lab-order-detail-page'
@@ -99,6 +101,22 @@ export default function App() {
                 element={
                   <RequirePermission permission={['dashboard.view', 'dashboard.view_own']}>
                     <ReportsPage />
+                  </RequirePermission>
+                }
+              />
+              <Route
+                path="/inventory"
+                element={
+                  <RequirePermission permission={['inventory.manage', 'inventory.record_usage', 'inventory.view']}>
+                    <InventoryPage />
+                  </RequirePermission>
+                }
+              />
+              <Route
+                path="/expenses"
+                element={
+                  <RequirePermission permission={['expenses.manage', 'expenses.record']}>
+                    <ExpensesPage />
                   </RequirePermission>
                 }
               />

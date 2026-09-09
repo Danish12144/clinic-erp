@@ -1,4 +1,4 @@
-import { BarChart3, CalendarClock, ClipboardList, FlaskConical, LayoutDashboard, LogOut, Menu, Pill, Receipt, Stethoscope, Users } from 'lucide-react'
+import { BarChart3, Boxes, CalendarClock, ClipboardList, FlaskConical, LayoutDashboard, LogOut, Menu, Pill, Receipt, Stethoscope, Users, Wallet } from 'lucide-react'
 import { useState } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
 import { RoleBadge } from '@/components/staff/role-badge'
@@ -24,6 +24,8 @@ const NAV_ITEMS: NavItem[] = [
   { to: '/billing', label: 'Billing', icon: Receipt, permission: ['billing.manage', 'billing.view_own'] },
   { to: '/reports', label: 'Reports', icon: BarChart3, permission: ['dashboard.view', 'dashboard.view_own'] },
   { to: '/pharmacy', label: 'Pharmacy', icon: Pill, permission: 'pharmacy.view_catalog' },
+  { to: '/inventory', label: 'Inventory', icon: Boxes, permission: ['inventory.manage', 'inventory.record_usage', 'inventory.view'] },
+  { to: '/expenses', label: 'Expenses', icon: Wallet, permission: ['expenses.manage', 'expenses.record'] },
   { to: '/lab', label: 'Lab', icon: FlaskConical, permission: ['lab.order', 'lab.enter_results', 'lab.manage_catalog'] },
   { to: '/staff', label: 'Staff Directory', icon: Stethoscope, permission: 'staff.manage' },
 ]
