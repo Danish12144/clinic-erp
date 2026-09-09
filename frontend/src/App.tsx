@@ -7,6 +7,9 @@ import { AuthProvider } from '@/features/auth/auth-context'
 import { BillingPage } from '@/pages/billing-page'
 import { DashboardPage } from '@/pages/dashboard-page'
 import { InvoiceDetailPage } from '@/pages/invoice-detail-page'
+import { LabCatalogPage } from '@/pages/lab-catalog-page'
+import { LabOrderDetailPage } from '@/pages/lab-order-detail-page'
+import { LabOrdersPage } from '@/pages/lab-orders-page'
 import { LoginPage } from '@/pages/login-page'
 import { OpdQueuePage } from '@/pages/opd-queue-page'
 import { OpdWorkspacePage } from '@/pages/opd-workspace-page'
@@ -102,6 +105,30 @@ export default function App() {
                 element={
                   <RequirePermission permission={['pharmacy.dispense', 'pharmacy.sell_otc']}>
                     <PharmacySalesPage />
+                  </RequirePermission>
+                }
+              />
+              <Route
+                path="/lab"
+                element={
+                  <RequirePermission permission={['lab.order', 'lab.enter_results', 'lab.view_results']}>
+                    <LabOrdersPage />
+                  </RequirePermission>
+                }
+              />
+              <Route
+                path="/lab/orders/:orderId"
+                element={
+                  <RequirePermission permission={['lab.order', 'lab.enter_results', 'lab.view_results']}>
+                    <LabOrderDetailPage />
+                  </RequirePermission>
+                }
+              />
+              <Route
+                path="/lab/catalog"
+                element={
+                  <RequirePermission permission={['lab.manage_catalog', 'lab.order', 'lab.enter_results', 'lab.view_results']}>
+                    <LabCatalogPage />
                   </RequirePermission>
                 }
               />
