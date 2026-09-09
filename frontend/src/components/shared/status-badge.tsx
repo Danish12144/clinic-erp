@@ -20,6 +20,12 @@ const STATUS_STYLES: Record<string, string> = {
   ACTIVE: 'bg-emerald-50 text-emerald-700 ring-emerald-600/20 dark:bg-emerald-500/10 dark:text-emerald-400 dark:ring-emerald-500/20',
   INVITED: 'bg-amber-50 text-amber-700 ring-amber-600/20 dark:bg-amber-500/10 dark:text-amber-400 dark:ring-amber-500/20',
   INACTIVE: 'bg-slate-100 text-slate-600 ring-slate-500/20 dark:bg-slate-500/10 dark:text-slate-400 dark:ring-slate-500/20',
+  // Invoice statuses (backend/app/modules/billing/models.py::InvoiceStatus)
+  DRAFT: 'bg-slate-100 text-slate-600 ring-slate-500/20 dark:bg-slate-500/10 dark:text-slate-400 dark:ring-slate-500/20',
+  ISSUED: 'bg-amber-50 text-amber-700 ring-amber-600/20 dark:bg-amber-500/10 dark:text-amber-400 dark:ring-amber-500/20',
+  PARTIALLY_PAID: 'bg-blue-50 text-blue-700 ring-blue-600/20 dark:bg-blue-500/10 dark:text-blue-400 dark:ring-blue-500/20',
+  PAID: 'bg-emerald-50 text-emerald-700 ring-emerald-600/20 dark:bg-emerald-500/10 dark:text-emerald-400 dark:ring-emerald-500/20',
+  VOID: 'bg-rose-50 text-rose-700 ring-rose-600/20 dark:bg-rose-500/10 dark:text-rose-400 dark:ring-rose-500/20',
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -36,6 +42,11 @@ const STATUS_LABELS: Record<string, string> = {
   ACTIVE: 'Active',
   INVITED: 'Invited',
   INACTIVE: 'Inactive',
+  DRAFT: 'Draft',
+  ISSUED: 'Issued',
+  PARTIALLY_PAID: 'Partially paid',
+  PAID: 'Paid',
+  VOID: 'Void',
 }
 
 export function StatusBadge({ status, className }: { status: string; className?: string }) {

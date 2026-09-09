@@ -1,4 +1,4 @@
-import { ClipboardList, LayoutDashboard, LogOut, Menu, Stethoscope, Users } from 'lucide-react'
+import { ClipboardList, LayoutDashboard, LogOut, Menu, Receipt, Stethoscope, Users } from 'lucide-react'
 import { useState } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
 import { RoleBadge } from '@/components/staff/role-badge'
@@ -11,13 +11,16 @@ interface NavItem {
   to: string
   label: string
   icon: typeof LayoutDashboard
-  permission?: string
+  // Any one of these permissions is enough to show the item — mirrors
+  // RequirePermission's "any of" semantics (backend's require_any_permission).
+  permission?: string | string[]
 }
 
 const NAV_ITEMS: NavItem[] = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard },
   { to: '/patients', label: 'Patients', icon: Users, permission: 'patients.view_demographics' },
   { to: '/opd', label: 'OPD Queue', icon: ClipboardList, permission: 'consultation.manage' },
+  { to: '/billing', label: 'Billing', icon: Receipt, permission: ['billing.manage', 'billing.view_own'] },
   { to: '/staff', label: 'Staff Directory', icon: Stethoscope, permission: 'staff.manage' },
 ]
 
@@ -93,7 +96,9 @@ function SidebarNav({ items, onNavigate }: { items: NavItem[]; onNavigate?: () =
 
 export function AppShell() {
   const { hasPermission } = useAuth()
-  const visibleItems = NAV_ITEMS.filter((item) => !item.permission || hasPermission(item.permission))
+  const visibleItems = NAV_ITEMS.filter(
+    (item) => !item.permission || (Array.isArray(item.permission) ? item.permission : [item.permission]).some(hasPermission),
+  )
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
 
   return (

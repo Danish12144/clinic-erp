@@ -4,7 +4,9 @@ import { queryClient } from '@/app/query-client'
 import { AppShell } from '@/components/layout/app-shell'
 import { Toaster } from '@/components/ui/sonner'
 import { AuthProvider } from '@/features/auth/auth-context'
+import { BillingPage } from '@/pages/billing-page'
 import { DashboardPage } from '@/pages/dashboard-page'
+import { InvoiceDetailPage } from '@/pages/invoice-detail-page'
 import { LoginPage } from '@/pages/login-page'
 import { OpdQueuePage } from '@/pages/opd-queue-page'
 import { OpdWorkspacePage } from '@/pages/opd-workspace-page'
@@ -57,6 +59,22 @@ export default function App() {
                 element={
                   <RequirePermission permission="consultation.manage">
                     <OpdWorkspacePage />
+                  </RequirePermission>
+                }
+              />
+              <Route
+                path="/billing"
+                element={
+                  <RequirePermission permission={['billing.manage', 'billing.view_own']}>
+                    <BillingPage />
+                  </RequirePermission>
+                }
+              />
+              <Route
+                path="/billing/:invoiceId"
+                element={
+                  <RequirePermission permission={['billing.manage', 'billing.view_own']}>
+                    <InvoiceDetailPage />
                   </RequirePermission>
                 }
               />
