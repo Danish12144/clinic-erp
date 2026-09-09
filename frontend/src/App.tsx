@@ -77,7 +77,7 @@ export default function App() {
                 <Route
                   path="/opd"
                   element={
-                    <RequirePermission permission="consultation.manage">
+                    <RequirePermission permission="consultation.manage" redirectTo="/appointments">
                       <OpdQueuePage />
                     </RequirePermission>
                   }
@@ -85,7 +85,7 @@ export default function App() {
                 <Route
                   path="/opd/:encounterId"
                   element={
-                    <RequirePermission permission="consultation.manage">
+                    <RequirePermission permission="consultation.manage" redirectTo="/appointments">
                       <OpdWorkspacePage />
                     </RequirePermission>
                   }
