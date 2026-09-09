@@ -90,13 +90,28 @@ class MeResponse(BaseModel):
 class InviteInfo(BaseModel):
     """Returned by both Doctor and Staff Management's create/resend-invite
     endpoints — the invite mechanism itself lives here in Auth (see
-    StaffInvite), shared by any module that provisions a staff account."""
+    StaffInvite), shared by any module that provisions a staff account.
 
-    invite_expires_at: datetime
-    # Only populated outside `production` — same placeholder-delivery
-    # pattern as OTP's `debug_code` above, until a real Communications
-    # module can deliver this via email/SMS.
+    Exactly one of `debug_invite_token`/`temporary_password` is ever
+    populated, chosen by `issue_staff_invite`'s own environment branch —
+    never both, never neither:
+
+    - Outside `production`: `debug_invite_token` (the real invite/
+      accept-invite flow — `invite_expires_at` is this token's expiry).
+      Same placeholder-delivery pattern as OTP's `debug_code` above, until
+      a real Communications module can deliver it by email/SMS instead.
+    - In `production`: `temporary_password` instead, and
+      `invite_expires_at` is `None` — there is no real email/SMS provider
+      configured yet, so a token nobody can ever receive is worse than
+      useless; the account is activated immediately with a random
+      password revealed here, once, the same one-time-reveal pattern
+      `scripts/seed_clinic_owner.py` already uses for the first Owner
+      account. See `issue_staff_invite`'s own docstring for the full
+      reasoning."""
+
+    invite_expires_at: datetime | None = None
     debug_invite_token: str | None = None
+    temporary_password: str | None = None
 
 
 class AcceptInviteRequest(BaseModel):

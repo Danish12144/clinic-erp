@@ -63,8 +63,9 @@ const DEFAULT_VALUES: InviteFormValues = {
 interface InviteSuccess {
   name: string
   roleCode: InvitableRole
-  expiresAt: string
+  expiresAt: string | null
   debugToken: string | null
+  temporaryPassword: string | null
 }
 
 export function InviteStaffDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
@@ -108,6 +109,7 @@ export function InviteStaffDialog({ open, onOpenChange }: { open: boolean; onOpe
           roleCode: 'DOCTOR',
           expiresAt: created.invite.invite_expires_at,
           debugToken: created.invite.debug_invite_token,
+          temporaryPassword: created.invite.temporary_password,
         })
       } else {
         const created = await createStaff.mutateAsync({
@@ -123,6 +125,7 @@ export function InviteStaffDialog({ open, onOpenChange }: { open: boolean; onOpe
           roleCode: values.roleCode,
           expiresAt: created.invite.invite_expires_at,
           debugToken: created.invite.debug_invite_token,
+          temporaryPassword: created.invite.temporary_password,
         })
       }
       toast.success('Invite created')
@@ -137,12 +140,24 @@ export function InviteStaffDialog({ open, onOpenChange }: { open: boolean; onOpe
         {success ? (
           <>
             <DialogHeader>
-              <DialogTitle>Invite created</DialogTitle>
+              <DialogTitle>{success.temporaryPassword ? 'Account created' : 'Invite created'}</DialogTitle>
               <DialogDescription>
-                {success.name} (<RoleBadge roleCode={success.roleCode} />) has been invited. The invite expires{' '}
-                {new Date(success.expiresAt).toLocaleString()}.
+                {success.name} (<RoleBadge roleCode={success.roleCode} />){' '}
+                {success.temporaryPassword
+                  ? 'is active now.'
+                  : `has been invited. The invite expires ${success.expiresAt ? new Date(success.expiresAt).toLocaleString() : ''}.`}
               </DialogDescription>
             </DialogHeader>
+            {success.temporaryPassword && (
+              <div className="flex flex-col gap-1.5">
+                <Label>Temporary password — shown once</Label>
+                <p className="text-xs text-muted-foreground">
+                  No real email/SMS provider is configured yet — share this password with them directly (e.g. by
+                  phone or in person). It's never shown again after you close this dialog.
+                </p>
+                <Input readOnly value={success.temporaryPassword} onFocus={(e) => e.currentTarget.select()} className="font-mono text-xs" />
+              </div>
+            )}
             {success.debugToken && (
               <div className="flex flex-col gap-1.5">
                 <Label>Dev-only invite token</Label>

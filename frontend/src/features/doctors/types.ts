@@ -62,8 +62,11 @@ export interface DoctorListResponse {
 }
 
 export interface InviteInfo {
-  invite_expires_at: string
+  // Exactly one of debug_invite_token/temporary_password is ever set, never
+  // both — see backend/app/modules/auth/service.py::issue_staff_invite.
+  invite_expires_at: string | null
   debug_invite_token: string | null
+  temporary_password: string | null
 }
 
 export interface DoctorCreateRequest {

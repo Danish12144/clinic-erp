@@ -9,6 +9,7 @@ everything else. Nothing here ever queries across tenants except that one
 resolution step.
 """
 
+import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -386,10 +387,38 @@ class PermissionOverrideService:
 async def issue_staff_invite(session, *, tenant_id: uuid.UUID, user_id: uuid.UUID) -> InviteInfo:
     """Called by Doctor/Staff Management from within their own already-open
     `tenant_session`, right after creating the `User` row for a new staff
-    account — hence taking `session` directly rather than opening one
-    itself, unlike every method on `AuthService`. Deletes any still-pending
-    invite for the user first, so a resend invalidates the previous token
-    rather than leaving two valid at once."""
+    account (and again from either module's `resend_invite`) — hence
+    taking `session` directly rather than opening one itself, unlike every
+    method on `AuthService`.
+
+    Branches by `settings.is_production`, and the two branches are
+    genuinely different mechanisms, not the same one with a field hidden:
+
+    - Outside production (dev/test — this is the ONLY path either
+      environment ever takes, so every existing integration test's
+      create-account-then-accept-invite setup helper is completely
+      unaffected by the branch below): unchanged from before this
+      docstring was rewritten — deletes any still-pending invite for the
+      user first (so a resend invalidates the previous token rather than
+      leaving two valid at once), creates a real `StaffInvite` row, and
+      returns its raw token via `debug_invite_token` for `accept-invite`.
+    - In production: there is still no real email/SMS provider wired up
+      (`app/modules/notifications/adapters.py` — `ConsoleChannelAdapter`
+      only), and `debug_invite_token` is deliberately `None` here in
+      production regardless, so issuing an invite token nobody can ever
+      receive would create an account that can never be activated. Instead,
+      this generates a random password, activates the account with it
+      immediately (`UserRepository.activate_with_password` — the exact
+      same repository method `AuthService.accept_invite` already calls),
+      and returns it once via `temporary_password` — the same one-time-
+      reveal pattern `scripts/seed_clinic_owner.py` uses for the first
+      Owner account. No `StaffInvite` row is created at all in this
+      branch; there is nothing for it to represent."""
+    if settings.is_production:
+        raw_password = secrets.token_urlsafe(18)
+        await UserRepository(session).activate_with_password(user_id, password_hash=security.hash_password(raw_password))
+        return InviteInfo(temporary_password=raw_password)
+
     invite_repo = StaffInviteRepository(session)
     await invite_repo.delete_pending_for_user(user_id)
     token = security.generate_opaque_token()
@@ -397,4 +426,4 @@ async def issue_staff_invite(session, *, tenant_id: uuid.UUID, user_id: uuid.UUI
     await invite_repo.create(
         tenant_id=tenant_id, user_id=user_id, token_hash=security.hash_opaque_token(token), expires_at=expires_at
     )
-    return InviteInfo(invite_expires_at=expires_at, debug_invite_token=None if settings.is_production else token)
+    return InviteInfo(invite_expires_at=expires_at, debug_invite_token=token)

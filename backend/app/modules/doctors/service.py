@@ -16,11 +16,14 @@ import uuid
 from fastapi import HTTPException, status
 from sqlalchemy.exc import IntegrityError
 
+from app.core.config import get_settings
 from app.core.db import tenant_session
 from app.modules.audit.service import record as record_audit
 from app.modules.auth.models import UserStatus
 from app.modules.auth.schemas import InviteInfo
 from app.modules.auth.service import issue_staff_invite
+
+settings = get_settings()
 from app.modules.doctors.models import DoctorProfile
 from app.modules.doctors.repository import BranchAssignmentRepository, DoctorRepository
 from app.modules.doctors.schemas import (
@@ -121,7 +124,13 @@ class DoctorService:
             if found is None:
                 raise HTTPException(status.HTTP_404_NOT_FOUND, "Doctor not found")
             user, _ = found
-            if user.status != UserStatus.INVITED:
+            # In production, issue_staff_invite always (re)generates a
+            # temporary password rather than a token — there's no more
+            # INVITED-only window to gate on, since create_doctor already
+            # activates the account immediately there. Outside production
+            # the real invite/accept-invite flow is unchanged, so this
+            # precondition still applies exactly as before.
+            if not settings.is_production and user.status != UserStatus.INVITED:
                 raise HTTPException(status.HTTP_409_CONFLICT, "This account already has credentials set")
             return await issue_staff_invite(session, tenant_id=tenant_id, user_id=user_id)
 
