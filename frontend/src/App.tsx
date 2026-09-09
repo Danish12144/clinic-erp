@@ -18,6 +18,7 @@ import { PatientsPage } from '@/pages/patients-page'
 import { PharmacyCatalogPage } from '@/pages/pharmacy-catalog-page'
 import { PharmacyDispensePage } from '@/pages/pharmacy-dispense-page'
 import { PharmacySalesPage } from '@/pages/pharmacy-sales-page'
+import { ReportsPage } from '@/pages/reports-page'
 import { StaffDirectoryPage } from '@/pages/staff-directory-page'
 import { RequireAuth } from '@/routes/require-auth'
 import { RequirePermission } from '@/routes/require-permission'
@@ -90,6 +91,14 @@ export default function App() {
                 element={
                   <RequirePermission permission={['billing.manage', 'billing.view_own']}>
                     <InvoiceDetailPage />
+                  </RequirePermission>
+                }
+              />
+              <Route
+                path="/reports"
+                element={
+                  <RequirePermission permission={['dashboard.view', 'dashboard.view_own']}>
+                    <ReportsPage />
                   </RequirePermission>
                 }
               />
