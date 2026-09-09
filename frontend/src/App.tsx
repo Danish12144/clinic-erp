@@ -4,6 +4,7 @@ import { queryClient } from '@/app/query-client'
 import { AppShell } from '@/components/layout/app-shell'
 import { Toaster } from '@/components/ui/sonner'
 import { AuthProvider } from '@/features/auth/auth-context'
+import { AppointmentsPage } from '@/pages/appointments-page'
 import { BillingPage } from '@/pages/billing-page'
 import { DashboardPage } from '@/pages/dashboard-page'
 import { InvoiceDetailPage } from '@/pages/invoice-detail-page'
@@ -36,6 +37,14 @@ export default function App() {
               }
             >
               <Route index element={<DashboardPage />} />
+              <Route
+                path="/appointments"
+                element={
+                  <RequirePermission permission="appointments.manage">
+                    <AppointmentsPage />
+                  </RequirePermission>
+                }
+              />
               <Route
                 path="/patients"
                 element={

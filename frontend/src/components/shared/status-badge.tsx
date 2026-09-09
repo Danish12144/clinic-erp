@@ -36,6 +36,10 @@ const STATUS_STYLES: Record<string, string> = {
   LOW: 'bg-amber-50 text-amber-700 ring-amber-600/20 dark:bg-amber-500/10 dark:text-amber-400 dark:ring-amber-500/20',
   HIGH: 'bg-orange-50 text-orange-700 ring-orange-600/20 dark:bg-orange-500/10 dark:text-orange-400 dark:ring-orange-500/20',
   CRITICAL: 'bg-rose-100 text-rose-800 ring-rose-600/30 dark:bg-rose-500/20 dark:text-rose-300 dark:ring-rose-500/30',
+  // Appointment statuses (backend/app/modules/appointments/models.py::AppointmentStatus)
+  // — IN_PROGRESS/COMPLETED/CANCELLED/NO_SHOW already defined above, reused as-is.
+  SCHEDULED: 'bg-blue-50 text-blue-700 ring-blue-600/20 dark:bg-blue-500/10 dark:text-blue-400 dark:ring-blue-500/20',
+  CHECKED_IN: 'bg-emerald-50 text-emerald-700 ring-emerald-600/20 dark:bg-emerald-500/10 dark:text-emerald-400 dark:ring-emerald-500/20',
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -64,6 +68,8 @@ const STATUS_LABELS: Record<string, string> = {
   LOW: 'Low',
   HIGH: 'High',
   CRITICAL: 'Critical',
+  SCHEDULED: 'Scheduled',
+  CHECKED_IN: 'Checked in',
 }
 
 export function StatusBadge({ status, className }: { status: string; className?: string }) {
