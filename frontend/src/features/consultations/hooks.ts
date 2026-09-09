@@ -3,6 +3,7 @@ import {
   completeConsultation,
   issuePrescription,
   searchConsultationsByEncounter,
+  searchPrescriptions,
   startConsultation,
   updateConsultation,
 } from '@/features/consultations/api'
@@ -11,6 +12,14 @@ import type {
   ConsultationUpdateRequest,
   PrescriptionCreateRequest,
 } from '@/features/consultations/types'
+
+export function usePatientPrescriptions(patientId: string | undefined) {
+  return useQuery({
+    queryKey: ['prescriptions', 'by-patient', patientId],
+    queryFn: () => searchPrescriptions({ patientId, limit: 20 }),
+    enabled: Boolean(patientId),
+  })
+}
 
 export function useConsultationByEncounter(encounterId: string | undefined) {
   return useQuery({

@@ -11,6 +11,9 @@ import { LoginPage } from '@/pages/login-page'
 import { OpdQueuePage } from '@/pages/opd-queue-page'
 import { OpdWorkspacePage } from '@/pages/opd-workspace-page'
 import { PatientsPage } from '@/pages/patients-page'
+import { PharmacyCatalogPage } from '@/pages/pharmacy-catalog-page'
+import { PharmacyDispensePage } from '@/pages/pharmacy-dispense-page'
+import { PharmacySalesPage } from '@/pages/pharmacy-sales-page'
 import { StaffDirectoryPage } from '@/pages/staff-directory-page'
 import { RequireAuth } from '@/routes/require-auth'
 import { RequirePermission } from '@/routes/require-permission'
@@ -75,6 +78,30 @@ export default function App() {
                 element={
                   <RequirePermission permission={['billing.manage', 'billing.view_own']}>
                     <InvoiceDetailPage />
+                  </RequirePermission>
+                }
+              />
+              <Route
+                path="/pharmacy"
+                element={
+                  <RequirePermission permission="pharmacy.view_catalog">
+                    <PharmacyCatalogPage />
+                  </RequirePermission>
+                }
+              />
+              <Route
+                path="/pharmacy/dispense"
+                element={
+                  <RequirePermission permission="pharmacy.dispense">
+                    <PharmacyDispensePage />
+                  </RequirePermission>
+                }
+              />
+              <Route
+                path="/pharmacy/sales"
+                element={
+                  <RequirePermission permission={['pharmacy.dispense', 'pharmacy.sell_otc']}>
+                    <PharmacySalesPage />
                   </RequirePermission>
                 }
               />

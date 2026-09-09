@@ -75,3 +75,18 @@ export interface PrescriptionSummary {
   // the request path from pdf_document_id instead. See features/files/api.ts.
   pdf_download_url: string | null
 }
+
+export interface PrescriptionListResponse {
+  items: PrescriptionSummary[]
+  total: number
+  limit: number
+  offset: number
+}
+
+export interface PrescriptionSearchParams {
+  encounterId?: string
+  patientId?: string
+  doctorId?: string
+  limit?: number
+  offset?: number
+}

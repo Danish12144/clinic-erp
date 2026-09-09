@@ -1,4 +1,4 @@
-import { ClipboardList, LayoutDashboard, LogOut, Menu, Receipt, Stethoscope, Users } from 'lucide-react'
+import { ClipboardList, LayoutDashboard, LogOut, Menu, Pill, Receipt, Stethoscope, Users } from 'lucide-react'
 import { useState } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
 import { RoleBadge } from '@/components/staff/role-badge'
@@ -21,6 +21,7 @@ const NAV_ITEMS: NavItem[] = [
   { to: '/patients', label: 'Patients', icon: Users, permission: 'patients.view_demographics' },
   { to: '/opd', label: 'OPD Queue', icon: ClipboardList, permission: 'consultation.manage' },
   { to: '/billing', label: 'Billing', icon: Receipt, permission: ['billing.manage', 'billing.view_own'] },
+  { to: '/pharmacy', label: 'Pharmacy', icon: Pill, permission: 'pharmacy.view_catalog' },
   { to: '/staff', label: 'Staff Directory', icon: Stethoscope, permission: 'staff.manage' },
 ]
 

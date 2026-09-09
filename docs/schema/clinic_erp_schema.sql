@@ -1319,7 +1319,7 @@ INSERT INTO permissions (code, module, description) VALUES
   ('consultation.manage',         'clinical',      'Create/edit consultation, diagnosis, clinical notes'),
   ('consultation.view',           'clinical',      'View consultations/clinical notes — Doctor scoped to own, Owner/Nurse tenant-wide'),
   ('prescription.manage',         'clinical',      'Issue e-prescriptions'),
-  ('prescription.view',           'clinical',      'View prescriptions — Doctor scoped to own, Owner/Nurse tenant-wide, Patient scoped to their own encounters (migration 0026)'),
+  ('prescription.view',           'clinical',      'View prescriptions — Doctor scoped to own, Owner/Nurse/Pharmacy Staff tenant-wide, Patient scoped to their own encounters (migrations 0026, 0028)'),
   ('billing.manage',              'billing',       'Create/edit invoices'),
   ('billing.view_own',            'billing',       'Patient views own invoices'),
   ('payments.record',             'billing',       'Record payments against an invoice'),
@@ -1382,7 +1382,7 @@ SELECT r.id, p.id FROM roles r, permissions p WHERE (r.code, p.code) IN (
   ('RECEPTIONIST','queue.manage'), ('RECEPTIONIST','queue.view'), ('RECEPTIONIST','vitals.view'),
   ('RECEPTIONIST','billing.manage'),
   ('RECEPTIONIST','payments.record'), ('RECEPTIONIST','crm.manage'),
-  ('RECEPTIONIST','communications.send'), ('RECEPTIONIST','expenses.record'), ('RECEPTIONIST','pharmacy.sell_otc'),
+  ('RECEPTIONIST','communications.send'), ('RECEPTIONIST','expenses.record'), ('RECEPTIONIST','pharmacy.sell_otc'), ('RECEPTIONIST','pharmacy.view_catalog'),
   ('RECEPTIONIST','inventory.record_usage'), ('RECEPTIONIST','leads.manage'), ('RECEPTIONIST','notifications.view'),
 
   ('NURSE','patients.view_demographics'), ('NURSE','vitals.record'), ('NURSE','vitals.view'),
@@ -1392,7 +1392,7 @@ SELECT r.id, p.id FROM roles r, permissions p WHERE (r.code, p.code) IN (
 
   ('LAB_STAFF','lab.order'), ('LAB_STAFF','lab.enter_results'), ('LAB_STAFF','lab.view_results'), ('LAB_STAFF','patients.view_demographics'),
 
-  ('PHARMACY_STAFF','pharmacy.manage_catalog'), ('PHARMACY_STAFF','pharmacy.view_catalog'), ('PHARMACY_STAFF','pharmacy.dispense'), ('PHARMACY_STAFF','patients.view_demographics'),
+  ('PHARMACY_STAFF','pharmacy.manage_catalog'), ('PHARMACY_STAFF','pharmacy.view_catalog'), ('PHARMACY_STAFF','pharmacy.dispense'), ('PHARMACY_STAFF','patients.view_demographics'), ('PHARMACY_STAFF','prescription.view'),
 
   ('OTHER_STAFF','inventory.record_usage'),
 

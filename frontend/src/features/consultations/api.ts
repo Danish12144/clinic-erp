@@ -5,8 +5,23 @@ import type {
   ConsultationSummary,
   ConsultationUpdateRequest,
   PrescriptionCreateRequest,
+  PrescriptionListResponse,
+  PrescriptionSearchParams,
   PrescriptionSummary,
 } from '@/features/consultations/types'
+
+export async function searchPrescriptions(params: PrescriptionSearchParams): Promise<PrescriptionListResponse> {
+  const { data } = await apiClient.get<PrescriptionListResponse>('/prescriptions', {
+    params: {
+      encounter_id: params.encounterId || undefined,
+      patient_id: params.patientId || undefined,
+      doctor_id: params.doctorId || undefined,
+      limit: params.limit ?? 20,
+      offset: params.offset ?? 0,
+    },
+  })
+  return data
+}
 
 export async function startConsultation(payload: ConsultationStartRequest): Promise<ConsultationSummary> {
   const { data } = await apiClient.post<ConsultationSummary>('/consultations', payload)
