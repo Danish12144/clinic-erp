@@ -10,6 +10,7 @@ from sqlalchemy import select
 
 from app.core.db import platform_admin_session
 from app.modules.auth.models import Permission, PermissionOverride
+from app.modules.patients.models import Patient
 from app.modules.tenancy.models import Clinic
 
 pytestmark = pytest.mark.usefixtures("require_db")
@@ -177,6 +178,73 @@ async def test_patient_otp_request_for_unregistered_phone_gives_generic_response
     # Must not reveal whether a phone number is registered.
     response = await api_client.post(
         "/api/v1/auth/patient/otp/request", json={"clinic_slug": test_clinic.slug, "phone": "+919800000999"}
+    )
+    assert response.status_code == 200
+    assert response.json()["debug_code"] is None
+
+
+async def test_patient_otp_request_auto_provisions_a_login_for_an_unlinked_patient(
+    api_client: AsyncClient, test_clinic: Clinic, make_patient
+) -> None:
+    """The portal's real first-login path: a clinical Patient record
+    exists (created the normal way, via Patient Management) with no
+    linked user yet — the very first OTP request for that phone should
+    both create the PATIENT user and link patients.user_id, not just
+    reject as unregistered."""
+    phone = "+919812345555"
+    patient_id = await make_patient(phone=phone, first_name="Asha", last_name="Rao")
+
+    requested = await api_client.post(
+        "/api/v1/auth/patient/otp/request", json={"clinic_slug": test_clinic.slug, "phone": phone}
+    )
+    assert requested.status_code == 200
+    code = requested.json()["debug_code"]
+    assert code is not None
+
+    verified = await api_client.post(
+        "/api/v1/auth/patient/otp/verify", json={"clinic_slug": test_clinic.slug, "phone": phone, "code": code}
+    )
+    assert verified.status_code == 200
+    body = verified.json()
+    assert body["user"]["role_code"] == "PATIENT"
+    assert body["user"]["first_name"] == "Asha"
+
+    async with platform_admin_session() as session:
+        patient = (await session.execute(select(Patient).where(Patient.id == patient_id))).scalar_one()
+        assert patient.user_id == uuid.UUID(body["user"]["id"])
+
+
+async def test_patient_otp_request_does_not_auto_provision_when_phone_matches_two_patients(
+    api_client: AsyncClient, test_clinic: Clinic, make_patient
+) -> None:
+    """Ambiguous — two different clinical records share this phone (e.g.
+    a shared household landline) — auto-linking would guess which person
+    is actually logging in, so this must fall through to the same generic
+    "if registered" response as an unregistered phone, not silently pick
+    one."""
+    phone = "+919812345556"
+    await make_patient(phone=phone, first_name="Parent")
+    await make_patient(phone=phone, first_name="Child")
+
+    response = await api_client.post(
+        "/api/v1/auth/patient/otp/request", json={"clinic_slug": test_clinic.slug, "phone": phone}
+    )
+    assert response.status_code == 200
+    assert response.json()["debug_code"] is None
+
+
+async def test_patient_otp_request_never_auto_provisions_over_a_staff_phone(
+    api_client: AsyncClient, test_clinic: Clinic, make_staff_user
+) -> None:
+    """A phone already belonging to a staff account (any non-PATIENT
+    role) must never get a PATIENT login auto-created for it — the
+    existing user is the whole answer, matched before any Patient-table
+    lookup even runs."""
+    phone = "+919812345557"
+    await make_staff_user(role_code="RECEPTIONIST", phone=phone)
+
+    response = await api_client.post(
+        "/api/v1/auth/patient/otp/request", json={"clinic_slug": test_clinic.slug, "phone": phone}
     )
     assert response.status_code == 200
     assert response.json()["debug_code"] is None

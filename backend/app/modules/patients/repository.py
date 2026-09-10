@@ -47,6 +47,22 @@ class PatientRepository:
         )
         return result.scalar_one_or_none()
 
+    async def find_unlinked_by_phone(self, *, tenant_id: uuid.UUID, phone: str) -> list[Patient]:
+        """Candidates for self-service portal auto-linking (see
+        AuthService.request_patient_otp) — only patients with no
+        `user_id` yet, so a phone that's already linked to a portal
+        account is never matched here (the auth service's own
+        `UserRepository.get_by_phone` lookup finds that case first)."""
+        result = await self._session.execute(
+            select(Patient).where(
+                Patient.tenant_id == tenant_id, Patient.phone == phone, Patient.user_id.is_(None), Patient.deleted_at.is_(None)
+            )
+        )
+        return list(result.scalars().all())
+
+    async def link_user(self, *, patient_id: uuid.UUID, user_id: uuid.UUID) -> None:
+        await self._session.execute(update(Patient).where(Patient.id == patient_id).values(user_id=user_id))
+
     async def find_possible_duplicates(
         self, *, tenant_id: uuid.UUID, phone: str | None, first_name: str, last_name: str | None, date_of_birth: date | None
     ) -> list[Patient]:

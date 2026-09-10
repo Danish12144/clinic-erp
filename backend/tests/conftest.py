@@ -30,6 +30,7 @@ from app.core.db import SessionLocal, platform_admin_session  # noqa: E402
 from app.core.security import hash_password  # noqa: E402
 from app.main import app  # noqa: E402
 from app.modules.auth.models import Role, User  # noqa: E402
+from app.modules.patients.models import Patient  # noqa: E402
 from app.modules.tenancy.models import Clinic  # noqa: E402
 
 settings = get_settings()
@@ -102,6 +103,26 @@ async def make_staff_user(test_clinic: Clinic, role_map: dict[str, uuid.UUID]):
             session.add(user)
             await session.flush()
             return user.id, password
+
+    return _create
+
+
+@pytest_asyncio.fixture
+async def make_patient(test_clinic: Clinic):
+    """Factory fixture for a clinical Patient record with no linked
+    portal user (user_id stays NULL) — the pre-auto-provisioning state
+    every real patient starts in, used to test AuthService.
+    request_patient_otp's self-service linking rather than the
+    already-linked case make_patient_user sets up."""
+
+    async def _create(*, phone: str, first_name: str = "Test", last_name: str | None = None) -> uuid.UUID:
+        async with platform_admin_session() as session:
+            patient = Patient(
+                tenant_id=test_clinic.id, mrn=f"MRN-TEST-{uuid.uuid4().hex[:10]}", first_name=first_name, last_name=last_name, phone=phone,
+            )
+            session.add(patient)
+            await session.flush()
+            return patient.id
 
     return _create
 

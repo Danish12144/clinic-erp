@@ -70,6 +70,21 @@ class UserRepository:
             .values(password_hash=password_hash, status=UserStatus.ACTIVE, updated_at=datetime.now(timezone.utc))
         )
 
+    async def create_patient_user(
+        self, *, tenant_id: uuid.UUID, role_id: uuid.UUID, phone: str, first_name: str | None, last_name: str | None
+    ) -> User:
+        """Self-service portal account creation (see AuthService.
+        request_patient_otp's own docstring) — ACTIVE immediately, no
+        password_hash at all, since a PATIENT never logs in any way but
+        phone+OTP. Unlike staff creation, there's no invite/accept-invite
+        step to go through first."""
+        user = User(
+            tenant_id=tenant_id, role_id=role_id, first_name=first_name, last_name=last_name, phone=phone, status=UserStatus.ACTIVE,
+        )
+        self._session.add(user)
+        await self._session.flush()
+        return user
+
 
 class PermissionRepository:
     def __init__(self, session: AsyncSession) -> None:

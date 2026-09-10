@@ -12,6 +12,14 @@ export async function getPatient(patientId: string): Promise<PatientSummary> {
   return data
 }
 
+// Patient-portal only — resolves the logged-in PATIENT's own record.
+// Staff calling this would 403 (GET /patients/me is patient-scoped
+// server-side), so no caller outside the portal needs it.
+export async function getMyPatient(): Promise<PatientSummary> {
+  const { data } = await apiClient.get<PatientSummary>('/patients/me')
+  return data
+}
+
 export async function searchPatients(params: PatientSearchParams): Promise<PatientListResponse> {
   const { data } = await apiClient.get<PatientListResponse>('/patients', {
     params: {

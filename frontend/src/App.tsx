@@ -3,10 +3,12 @@ import { lazy, Suspense } from 'react'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { queryClient } from '@/app/query-client'
 import { AppShell } from '@/components/layout/app-shell'
+import { PortalShell } from '@/components/layout/portal-shell'
 import { PageLoader } from '@/components/shared/page-loader'
 import { Toaster } from '@/components/ui/sonner'
 import { AuthProvider } from '@/features/auth/auth-context'
 import { RequireAuth } from '@/routes/require-auth'
+import { RequirePatientAuth } from '@/routes/require-patient-auth'
 import { RequirePermission } from '@/routes/require-permission'
 
 // Route-level code-splitting: each page becomes its own chunk, fetched only
@@ -34,6 +36,8 @@ const LabOrdersPage = lazy(() => import('@/pages/lab-orders-page').then((m) => (
 const LabOrderDetailPage = lazy(() => import('@/pages/lab-order-detail-page').then((m) => ({ default: m.LabOrderDetailPage })))
 const LabCatalogPage = lazy(() => import('@/pages/lab-catalog-page').then((m) => ({ default: m.LabCatalogPage })))
 const LeadsPage = lazy(() => import('@/pages/leads-page').then((m) => ({ default: m.LeadsPage })))
+const PortalLoginPage = lazy(() => import('@/pages/portal/portal-login-page').then((m) => ({ default: m.PortalLoginPage })))
+const PortalHomePage = lazy(() => import('@/pages/portal/portal-home-page').then((m) => ({ default: m.PortalHomePage })))
 
 export default function App() {
   return (
@@ -43,6 +47,16 @@ export default function App() {
           <Suspense fallback={<PageLoader />}>
             <Routes>
               <Route path="/login" element={<LoginPage />} />
+              <Route path="/portal/login" element={<PortalLoginPage />} />
+              <Route
+                element={
+                  <RequirePatientAuth>
+                    <PortalShell />
+                  </RequirePatientAuth>
+                }
+              >
+                <Route path="/portal" element={<PortalHomePage />} />
+              </Route>
               <Route
                 element={
                   <RequireAuth>

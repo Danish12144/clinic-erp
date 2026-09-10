@@ -43,6 +43,7 @@ from app.modules.auth.schemas import (
     TokenResponse,
     UserSummary,
 )
+from app.modules.patients.repository import PatientRepository
 
 settings = get_settings()
 
@@ -87,16 +88,50 @@ class AuthService:
 
     # ---- Patient (phone + OTP) ------------------------------------------
 
+    async def _resolve_or_provision_patient_user(self, session, *, tenant_id: uuid.UUID, phone: str) -> User | None:
+        """Self-service portal account linking (PRD §9's "patient portal,"
+        previously blocked entirely — `patients.user_id` has been
+        schema-ready since the Patients module shipped, but nothing ever
+        wrote to it). If a `User` already owns this phone, that's the
+        normal returning-patient path (or a staff member's phone, handled
+        below — never auto-provisioned over). Otherwise, exactly one
+        not-yet-linked `Patient` sharing this phone is enough certainty to
+        create the login and link it automatically; zero or more-than-one
+        match stays ambiguous and falls through to the generic response,
+        same as an unregistered phone — this never guesses."""
+        user_repo = UserRepository(session)
+        user = await user_repo.get_by_phone(phone)
+        if user is not None:
+            return user if user.role.code == "PATIENT" else None
+
+        candidates = await PatientRepository(session).find_unlinked_by_phone(tenant_id=tenant_id, phone=phone)
+        if len(candidates) != 1:
+            return None
+        patient = candidates[0]
+
+        patient_role = await RoleRepository(session).get_by_code("PATIENT")
+        if patient_role is None:
+            return None
+        new_user = await user_repo.create_patient_user(
+            tenant_id=tenant_id, role_id=patient_role.id, phone=phone, first_name=patient.first_name, last_name=patient.last_name,
+        )
+        await PatientRepository(session).link_user(patient_id=patient.id, user_id=new_user.id)
+        await record_audit(
+            session, tenant_id=tenant_id, actor_user_id=new_user.id, actor_role="PATIENT",
+            action="patient_user.self_provision", entity_type="patient", entity_id=patient.id, before=None,
+            after={"user_id": str(new_user.id)},
+        )
+        return new_user
+
     async def request_patient_otp(self, *, clinic_slug: str, phone: str) -> OtpRequestResponse:
         tenant_id = await self._resolve_tenant_id(clinic_slug)
         generic_response = OtpRequestResponse(message="If this phone number is registered, an OTP has been sent.")
 
         async with tenant_session(tenant_id) as session:
-            user_repo = UserRepository(session)
-            user = await user_repo.get_by_phone(phone)
+            user = await self._resolve_or_provision_patient_user(session, tenant_id=tenant_id, phone=phone)
             # Same response whether or not the phone is registered — don't
             # let an unauthenticated caller enumerate accounts.
-            if user is None or user.role.code != "PATIENT":
+            if user is None:
                 return generic_response
 
             code = security.generate_otp_code()

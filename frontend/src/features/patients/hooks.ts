@@ -1,5 +1,5 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { createPatient, getPatient, searchPatients } from '@/features/patients/api'
+import { createPatient, getMyPatient, getPatient, searchPatients } from '@/features/patients/api'
 import { classifyPatientSearchTerm } from '@/features/patients/search-classifier'
 import { useDebouncedValue } from '@/lib/use-debounced-value'
 import type { PatientCreateRequest } from '@/features/patients/types'
@@ -10,6 +10,11 @@ export function usePatient(patientId: string | undefined) {
     queryFn: () => getPatient(patientId!),
     enabled: Boolean(patientId),
   })
+}
+
+// Patient-portal only — see getMyPatient's own comment.
+export function useMyPatient() {
+  return useQuery({ queryKey: ['patients', 'me'], queryFn: getMyPatient })
 }
 
 // Debounced, live patient search — an empty term browses the most
