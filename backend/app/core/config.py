@@ -83,12 +83,21 @@ class Settings(BaseSettings):
         return v
 
     # File storage (§15) — "local" writes to disk under file_storage_local_dir,
-    # for dev/self-hosted use; an "s3" backend can be added later behind the
-    # same FileStorageBackend interface (app/core/storage.py) without any
-    # caller change. No S3/R2 credentials exist in this environment yet, so
-    # only "local" is actually implemented.
+    # for dev/self-hosted use; "r2" writes to a Cloudflare R2 bucket via
+    # boto3's S3-compatible client (app/core/storage.py::R2FileStorageBackend)
+    # — no caller (app/modules/files/service.py) needs to change either way.
+    # R2 was chosen for zero egress fees (every prescription PDF/document
+    # download is egress) and an S3-compatible API; the same backend class
+    # would work against real AWS S3 too by omitting r2_endpoint_url, but
+    # only R2 is actually configured/tested against right now.
     file_storage_backend: str = "local"
     file_storage_local_dir: str = "./var/uploads"
+
+    r2_bucket_name: str = ""
+    r2_endpoint_url: str = ""
+    r2_access_key_id: str = ""
+    r2_secret_access_key: str = ""
+    r2_region: str = "auto"
 
     # Notification channel adapters (§16) — "console" (default) logs the
     # message and simulates success, no real send. Swap to a real provider
