@@ -13,7 +13,7 @@ import { useCreateLead } from '@/features/leads/hooks'
 import { LEAD_SOURCES, LEAD_SOURCE_LABELS, type LeadSource } from '@/features/leads/types'
 import { getErrorMessage } from '@/lib/errors'
 
-const leadFormSchema = z.object({
+export const leadFormSchema = z.object({
   firstName: z.string().min(1, 'First name is required').max(100),
   lastName: z.string().max(100).optional().or(z.literal('')),
   phone: z.string().max(20).optional().or(z.literal('')),

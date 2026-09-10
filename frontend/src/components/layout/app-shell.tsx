@@ -7,13 +7,22 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/co
 import { useAuth } from '@/features/auth/auth-context'
 import { cn } from '@/lib/utils'
 
-interface NavItem {
+export interface NavItem {
   to: string
   label: string
   icon: typeof LayoutDashboard
   // Any one of these permissions is enough to show the item — mirrors
   // RequirePermission's "any of" semantics (backend's require_any_permission).
   permission?: string | string[]
+}
+
+// Extracted so it's testable without rendering the whole shell (Sheet/
+// mobile-nav pulls in browser APIs jsdom doesn't implement by default) —
+// this is the exact logic that produced two real RBAC-in-UI bugs already
+// (the Owner-can't-see-doctor-directory gap, the OPD redirect fix), so
+// it's worth testing directly rather than only via full-component renders.
+export function getVisibleNavItems(items: NavItem[], hasPermission: (code: string) => boolean): NavItem[] {
+  return items.filter((item) => !item.permission || (Array.isArray(item.permission) ? item.permission : [item.permission]).some(hasPermission))
 }
 
 const NAV_ITEMS: NavItem[] = [
@@ -103,9 +112,7 @@ function SidebarNav({ items, onNavigate }: { items: NavItem[]; onNavigate?: () =
 
 export function AppShell() {
   const { hasPermission } = useAuth()
-  const visibleItems = NAV_ITEMS.filter(
-    (item) => !item.permission || (Array.isArray(item.permission) ? item.permission : [item.permission]).some(hasPermission),
-  )
+  const visibleItems = getVisibleNavItems(NAV_ITEMS, hasPermission)
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
 
   return (

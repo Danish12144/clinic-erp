@@ -15,7 +15,7 @@ import { EXPENSE_CATEGORIES, EXPENSE_PAYMENT_MODES, type ExpenseSummary } from '
 import { getErrorMessage } from '@/lib/errors'
 import { formatDateInput } from '@/lib/working-hours'
 
-const expenseFormSchema = z.object({
+export const expenseFormSchema = z.object({
   branchId: z.string().min(1, 'Branch is required'),
   category: z.enum(EXPENSE_CATEGORIES),
   amount: z.string().refine((v) => Number(v) > 0, 'Amount must be greater than 0'),

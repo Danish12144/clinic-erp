@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import path from 'node:path'
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
@@ -13,5 +14,13 @@ export default defineConfig({
   },
   server: {
     port: 3000,
+  },
+  // No `globals: true` — test files import describe/it/expect/vi from
+  // 'vitest' explicitly instead, so this needed no change to
+  // tsconfig.app.json's `types` array (which `npm run build`'s `tsc -b`
+  // step type-checks test files under too, since they live under `src`).
+  test: {
+    environment: 'jsdom',
+    setupFiles: ['./src/test/setup.ts'],
   },
 })
