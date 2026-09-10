@@ -40,6 +40,13 @@ const STATUS_STYLES: Record<string, string> = {
   // — IN_PROGRESS/COMPLETED/CANCELLED/NO_SHOW already defined above, reused as-is.
   SCHEDULED: 'bg-blue-50 text-blue-700 ring-blue-600/20 dark:bg-blue-500/10 dark:text-blue-400 dark:ring-blue-500/20',
   CHECKED_IN: 'bg-emerald-50 text-emerald-700 ring-emerald-600/20 dark:bg-emerald-500/10 dark:text-emerald-400 dark:ring-emerald-500/20',
+  // Lead statuses (backend/app/modules/leads/models.py::LeadStatus) —
+  // CONVERTED/LOST reuse PAID/VOID's colors (a lead's own success/dead-end).
+  NEW: 'bg-blue-50 text-blue-700 ring-blue-600/20 dark:bg-blue-500/10 dark:text-blue-400 dark:ring-blue-500/20',
+  CONTACTED: 'bg-amber-50 text-amber-700 ring-amber-600/20 dark:bg-amber-500/10 dark:text-amber-400 dark:ring-amber-500/20',
+  APPOINTMENT_SCHEDULED: 'bg-violet-50 text-violet-700 ring-violet-600/20 dark:bg-violet-500/10 dark:text-violet-400 dark:ring-violet-500/20',
+  CONVERTED: 'bg-emerald-50 text-emerald-700 ring-emerald-600/20 dark:bg-emerald-500/10 dark:text-emerald-400 dark:ring-emerald-500/20',
+  LOST: 'bg-rose-50 text-rose-700 ring-rose-600/20 dark:bg-rose-500/10 dark:text-rose-400 dark:ring-rose-500/20',
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -70,6 +77,11 @@ const STATUS_LABELS: Record<string, string> = {
   CRITICAL: 'Critical',
   SCHEDULED: 'Scheduled',
   CHECKED_IN: 'Checked in',
+  NEW: 'New',
+  CONTACTED: 'Contacted',
+  APPOINTMENT_SCHEDULED: 'Appt. scheduled',
+  CONVERTED: 'Converted',
+  LOST: 'Lost',
 }
 
 export function StatusBadge({ status, className }: { status: string; className?: string }) {

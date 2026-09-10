@@ -33,6 +33,7 @@ const PharmacySalesPage = lazy(() => import('@/pages/pharmacy-sales-page').then(
 const LabOrdersPage = lazy(() => import('@/pages/lab-orders-page').then((m) => ({ default: m.LabOrdersPage })))
 const LabOrderDetailPage = lazy(() => import('@/pages/lab-order-detail-page').then((m) => ({ default: m.LabOrderDetailPage })))
 const LabCatalogPage = lazy(() => import('@/pages/lab-catalog-page').then((m) => ({ default: m.LabCatalogPage })))
+const LeadsPage = lazy(() => import('@/pages/leads-page').then((m) => ({ default: m.LeadsPage })))
 
 export default function App() {
   return (
@@ -175,6 +176,14 @@ export default function App() {
                   element={
                     <RequirePermission permission={['lab.manage_catalog', 'lab.order', 'lab.enter_results', 'lab.view_results']}>
                       <LabCatalogPage />
+                    </RequirePermission>
+                  }
+                />
+                <Route
+                  path="/leads"
+                  element={
+                    <RequirePermission permission="leads.manage">
+                      <LeadsPage />
                     </RequirePermission>
                   }
                 />
