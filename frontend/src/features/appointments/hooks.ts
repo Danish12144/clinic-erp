@@ -1,10 +1,20 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { cancelAppointment, createAppointment, rescheduleAppointment, searchAppointments } from '@/features/appointments/api'
+import {
+  cancelAppointment,
+  cancelMyAppointment,
+  createAppointment,
+  createMyAppointment,
+  getMyAppointments,
+  rescheduleAppointment,
+  rescheduleMyAppointment,
+  searchAppointments,
+} from '@/features/appointments/api'
 import type {
   AppointmentCancelRequest,
   AppointmentCreateRequest,
   AppointmentRescheduleRequest,
   AppointmentSearchParams,
+  MyAppointmentCreateRequest,
 } from '@/features/appointments/types'
 
 export function useAppointmentSearch(params: AppointmentSearchParams) {
@@ -42,6 +52,41 @@ export function useCancelAppointment() {
   return useMutation({
     mutationFn: ({ appointmentId, payload }: { appointmentId: string; payload: AppointmentCancelRequest }) =>
       cancelAppointment(appointmentId, payload),
+    onSuccess: invalidate,
+  })
+}
+
+// ---- Patient portal (self-booking) ---------------------------------------
+
+export function useMyAppointments() {
+  return useQuery({
+    queryKey: ['appointments', 'me'],
+    queryFn: () => getMyAppointments({}),
+  })
+}
+
+export function useCreateMyAppointment() {
+  const invalidate = useInvalidateAppointments()
+  return useMutation({
+    mutationFn: (payload: MyAppointmentCreateRequest) => createMyAppointment(payload),
+    onSuccess: invalidate,
+  })
+}
+
+export function useRescheduleMyAppointment() {
+  const invalidate = useInvalidateAppointments()
+  return useMutation({
+    mutationFn: ({ appointmentId, payload }: { appointmentId: string; payload: AppointmentRescheduleRequest }) =>
+      rescheduleMyAppointment(appointmentId, payload),
+    onSuccess: invalidate,
+  })
+}
+
+export function useCancelMyAppointment() {
+  const invalidate = useInvalidateAppointments()
+  return useMutation({
+    mutationFn: ({ appointmentId, payload }: { appointmentId: string; payload: AppointmentCancelRequest }) =>
+      cancelMyAppointment(appointmentId, payload),
     onSuccess: invalidate,
   })
 }

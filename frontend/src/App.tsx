@@ -38,6 +38,9 @@ const LabCatalogPage = lazy(() => import('@/pages/lab-catalog-page').then((m) =>
 const LeadsPage = lazy(() => import('@/pages/leads-page').then((m) => ({ default: m.LeadsPage })))
 const PortalLoginPage = lazy(() => import('@/pages/portal/portal-login-page').then((m) => ({ default: m.PortalLoginPage })))
 const PortalHomePage = lazy(() => import('@/pages/portal/portal-home-page').then((m) => ({ default: m.PortalHomePage })))
+const PortalAppointmentsPage = lazy(() =>
+  import('@/pages/portal/portal-appointments-page').then((m) => ({ default: m.PortalAppointmentsPage })),
+)
 
 export default function App() {
   return (
@@ -56,6 +59,7 @@ export default function App() {
                 }
               >
                 <Route path="/portal" element={<PortalHomePage />} />
+                <Route path="/portal/appointments" element={<PortalAppointmentsPage />} />
               </Route>
               <Route
                 element={

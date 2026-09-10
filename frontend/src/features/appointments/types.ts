@@ -45,6 +45,16 @@ export interface AppointmentCreateRequest {
   notes?: string | null
 }
 
+// Patient self-booking (POST /appointments/me) — no patient_id, it's
+// derived server-side from the caller's own linked Patient record.
+export interface MyAppointmentCreateRequest {
+  branch_id: string
+  doctor_id: string
+  scheduled_at: string
+  duration_minutes?: number
+  notes?: string | null
+}
+
 export interface AppointmentRescheduleRequest {
   scheduled_at?: string
   duration_minutes?: number
