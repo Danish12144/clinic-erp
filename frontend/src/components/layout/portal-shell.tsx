@@ -4,14 +4,14 @@ import { Button } from '@/components/ui/button'
 import { useAuth } from '@/features/auth/auth-context'
 import { cn } from '@/lib/utils'
 
-// Deliberately only lists screens that actually exist — add an entry here
-// as each portal screen ships (Lab Results), not ahead of it; a nav link
-// to a route that 404s is worse than a short nav.
+// Every planned portal screen now exists — Login, Home, Appointments,
+// Medical Records, Billing, Lab Results.
 const PORTAL_NAV_ITEMS = [
   { to: '/portal', label: 'Home' },
   { to: '/portal/appointments', label: 'Appointments' },
   { to: '/portal/records', label: 'Medical Records' },
   { to: '/portal/billing', label: 'Billing' },
+  { to: '/portal/lab-results', label: 'Lab Results' },
 ]
 
 export function PortalShell() {
