@@ -1,7 +1,8 @@
-import { Activity, ArrowRight, ClipboardList, Loader2, Play, RefreshCw } from 'lucide-react'
+import { Activity, ArrowRight, ClipboardList, IndianRupee, Loader2, Play, RefreshCw } from 'lucide-react'
 import { useState } from 'react'
 import { toast } from 'sonner'
 import { useNavigate } from 'react-router-dom'
+import { CollectConsultationFeeDialog } from '@/components/opd/collect-consultation-fee-dialog'
 import { RecordVitalsDialog } from '@/components/opd/record-vitals-dialog'
 import { EmptyState } from '@/components/shared/empty-state'
 import { StatusBadge } from '@/components/shared/status-badge'
@@ -11,8 +12,19 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { useAuth } from '@/features/auth/auth-context'
 import { useStartConsultation } from '@/features/consultations/hooks'
+import { useDoctorDirectory } from '@/features/doctors/hooks'
 import { useDoctorOpdQueue, type OpdQueueRow } from '@/features/opd/use-doctor-queue'
 import { getErrorMessage } from '@/lib/errors'
+
+const BILLABLE_ENCOUNTER_STATUSES = new Set(['OPEN', 'IN_CONSULTATION', 'COMPLETED'])
+
+export interface BillingTarget {
+  encounterId: string
+  patientId: string
+  branchId: string
+  patientName: string
+  defaultAmount: string | null
+}
 
 function formatAge(dateOfBirth: string | null | undefined): string {
   if (!dateOfBirth) return ''
@@ -30,12 +42,7 @@ function formatAge(dateOfBirth: string | null | undefined): string {
 // canManageConsultation," so a view-only caller sees a plain status badge
 // instead of a "Record vitals" button that would just 403 on click. See
 // OpdQueuePage's own comment for why this page serves all three audiences.
-function QueueActionCell({
-  row,
-  canManageConsultation,
-  canRecordVitals,
-  onRecordVitals,
-}: {
+function ConsultationAction({ row, canManageConsultation, canRecordVitals, onRecordVitals }: {
   row: OpdQueueRow
   canManageConsultation: boolean
   canRecordVitals: boolean
@@ -101,6 +108,40 @@ function QueueActionCell({
   )
 }
 
+// canManageConsultation/canRecordVitals each render at most one action
+// (see ConsultationAction); canBill (billing.manage — Owner/Receptionist)
+// is independent of both, so it renders alongside whichever one applies —
+// a Receptionist who only holds queue.view (no vitals.record) still gets
+// to collect the consultation fee for a waiting patient, the whole point
+// of this "pay first, see the doctor after" front-desk workflow.
+function QueueActionCell({
+  row,
+  canManageConsultation,
+  canRecordVitals,
+  canBill,
+  onRecordVitals,
+  onCollectFee,
+}: {
+  row: OpdQueueRow
+  canManageConsultation: boolean
+  canRecordVitals: boolean
+  canBill: boolean
+  onRecordVitals: (encounterId: string) => void
+  onCollectFee: (row: OpdQueueRow) => void
+}) {
+  return (
+    <div className="flex items-center justify-end gap-2">
+      {canBill && row.encounter && BILLABLE_ENCOUNTER_STATUSES.has(row.encounter.status) && (
+        <Button size="sm" variant="outline" className="gap-1" onClick={() => onCollectFee(row)}>
+          <IndianRupee className="size-3.5" />
+          Collect fee
+        </Button>
+      )}
+      <ConsultationAction row={row} canManageConsultation={canManageConsultation} canRecordVitals={canRecordVitals} onRecordVitals={onRecordVitals} />
+    </div>
+  )
+}
+
 export function OpdQueuePage() {
   const { user, hasPermission } = useAuth()
   // consultation.manage holders (Doctor/Owner) see their own queue, same
@@ -111,8 +152,11 @@ export function OpdQueuePage() {
   // (undefined) omits the doctor_id filter entirely).
   const canManageConsultation = hasPermission('consultation.manage')
   const canRecordVitals = hasPermission('vitals.record')
+  const canBill = hasPermission('billing.manage')
   const { rows, isLoading, isFetching, refetch } = useDoctorOpdQueue(canManageConsultation ? user?.id : undefined)
   const [vitalsEncounterId, setVitalsEncounterId] = useState<string | null>(null)
+  const [billingTarget, setBillingTarget] = useState<BillingTarget | null>(null)
+  const { data: doctorDirectory } = useDoctorDirectory()
 
   return (
     <div className="flex flex-col gap-4 p-4 sm:p-6">
@@ -193,7 +237,21 @@ export function OpdQueuePage() {
                       row={row}
                       canManageConsultation={canManageConsultation}
                       canRecordVitals={canRecordVitals}
+                      canBill={canBill}
                       onRecordVitals={setVitalsEncounterId}
+                      onCollectFee={(billingRow) => {
+                        if (!billingRow.encounter) return
+                        const doctor = doctorDirectory?.items.find((d) => d.user_id === billingRow.token.doctor_id)
+                        setBillingTarget({
+                          encounterId: billingRow.encounter.id,
+                          patientId: billingRow.encounter.patient_id,
+                          branchId: billingRow.encounter.branch_id,
+                          patientName: billingRow.patient
+                            ? [billingRow.patient.first_name, billingRow.patient.last_name].filter(Boolean).join(' ')
+                            : 'this patient',
+                          defaultAmount: doctor?.consultation_fee ?? null,
+                        })
+                      }}
                     />
                   </TableCell>
                 </TableRow>
@@ -203,6 +261,17 @@ export function OpdQueuePage() {
       </div>
 
       <RecordVitalsDialog encounterId={vitalsEncounterId} open={Boolean(vitalsEncounterId)} onOpenChange={(open) => !open && setVitalsEncounterId(null)} />
+      {billingTarget && (
+        <CollectConsultationFeeDialog
+          encounterId={billingTarget.encounterId}
+          patientId={billingTarget.patientId}
+          branchId={billingTarget.branchId}
+          patientName={billingTarget.patientName}
+          defaultAmount={billingTarget.defaultAmount}
+          open={billingTarget !== null}
+          onOpenChange={(open) => !open && setBillingTarget(null)}
+        />
+      )}
     </div>
   )
 }

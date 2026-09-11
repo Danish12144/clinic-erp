@@ -118,6 +118,11 @@ export function AppointmentsPage() {
     .filter((a) => !gridMatchedIds.has(a.id))
     .sort((a, b) => new Date(a.scheduled_at).getTime() - new Date(b.scheduled_at).getTime())
 
+  // Tracks which appointment ids the grid render below has already shown a
+  // row for — reset fresh each render, mutated during that one render pass
+  // only (see the slots.map callback's own comment for why this matters).
+  const renderedAppointmentIds = new Set<string>()
+
   return (
     <div className="flex flex-col gap-4 p-4 sm:p-6">
       <div>
@@ -211,6 +216,17 @@ export function AppointmentsPage() {
                 {!appointmentsLoading &&
                   slots.map((slot) => {
                     const appointment = appointmentForSlot(slot)
+                    // An appointment longer than one slot increment (e.g. a
+                    // 60-minute booking on a 15-minute grid) would otherwise
+                    // render as the same patient/actions repeated in every
+                    // slot it spans — a real duplication bug, not just a
+                    // cosmetic one, since each repeat rendered its own live
+                    // Reschedule/Cancel buttons for the identical
+                    // appointment. Only render it in the first slot it
+                    // covers; later slots it spans render nothing (the
+                    // duration is already shown on that first row).
+                    if (appointment && renderedAppointmentIds.has(appointment.id)) return null
+                    if (appointment) renderedAppointmentIds.add(appointment.id)
                     const patient = appointment ? patientsById.get(appointment.patient_id) : undefined
                     const canManage = appointment && ACTIVE_APPOINTMENT_STATUSES.has(appointment.status)
 
