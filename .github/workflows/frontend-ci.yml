@@ -1,0 +1,48 @@
+name: Frontend CI
+
+# Deliberately frontend-only and Playwright-free for now, by direct
+# instruction — lint + typecheck + Vitest give fast, no-external-state
+# feedback on every push/PR (matches PRD-ARCHITECTURE.md §28's "lint +
+# typecheck + test on PR"); Playwright's golden-path E2E needs a migrated
+# + seeded Postgres + a running backend (see frontend/playwright.config.ts's
+# own prerequisites comment) and is deliberately left as a documented
+# local/manual step rather than spinning up DB containers on every PR.
+# Backend (pytest) CI is a separate, not-yet-built undertaking — out of
+# scope here, this workflow only ever touches frontend/.
+on:
+  push:
+    branches: [master]
+    paths: ['frontend/**', '.github/workflows/frontend-ci.yml']
+  pull_request:
+    paths: ['frontend/**', '.github/workflows/frontend-ci.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Lint, typecheck, build, and test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build (includes tsc -b typecheck)
+        run: npm run build
+
+      - name: Unit tests (Vitest)
+        run: npm run test
