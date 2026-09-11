@@ -10,7 +10,7 @@ import { useBranches } from '@/features/branches/hooks'
 import { useCreateMyAppointment } from '@/features/appointments/hooks'
 import { useBookableDoctors } from '@/features/doctors/hooks'
 import { getErrorMessage } from '@/lib/errors'
-import { formatDateInput } from '@/lib/working-hours'
+import { formatDateInput, isSchedulableMoment } from '@/lib/working-hours'
 
 const DURATION_OPTIONS = [15, 30, 45, 60]
 
@@ -43,7 +43,7 @@ export function BookMyAppointmentDialog({ open, onOpenChange }: { open: boolean;
       return
     }
     const scheduledAt = new Date(`${dateValue}T${timeValue}:00`)
-    if (Number.isNaN(scheduledAt.getTime()) || scheduledAt <= new Date()) {
+    if (Number.isNaN(scheduledAt.getTime()) || !isSchedulableMoment(scheduledAt)) {
       toast.error('Pick a future date and time')
       return
     }

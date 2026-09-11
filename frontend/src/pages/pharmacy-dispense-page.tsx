@@ -25,6 +25,14 @@ function DispenseItemRow({ item }: { item: PrescriptionItemSummary }) {
   const dispense = useDispensePrescriptionItem()
 
   const fullyDispensed = remaining <= 0
+  // A prescription item is only ever dispensable against inventory when it
+  // was linked to a catalog medicine (medicine_id) at the point it was
+  // prescribed — a free-text-only item (the Rx pad's own fallback when a
+  // doctor types a name without picking a catalog suggestion) 422s every
+  // time with "no linked catalog medicine," which used to surface as a
+  // generic "Could not dispense" with no indication why. Disable it here
+  // instead of letting the click fail.
+  const notCatalogLinked = item.medicine_id == null
 
   async function handleDispense() {
     const qty = Number(quantity)
@@ -53,6 +61,10 @@ function DispenseItemRow({ item }: { item: PrescriptionItemSummary }) {
         <Badge variant="outline" className="gap-1 border-transparent bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400">
           <CheckCircle2 className="size-3.5" />
           Fully dispensed
+        </Badge>
+      ) : notCatalogLinked ? (
+        <Badge variant="outline" className="gap-1 border-transparent bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400">
+          Not catalog-linked — cannot dispense
         </Badge>
       ) : (
         <div className="flex items-center gap-2">

@@ -73,16 +73,19 @@ async def test_owner_can_record_vitals(api_client: AsyncClient, owner_headers: d
     assert response.status_code == 201
 
 
-async def test_receptionist_cannot_record_vitals_by_default(
+async def test_receptionist_can_record_vitals(
     api_client: AsyncClient, owner_headers: dict[str, str], test_clinic: Clinic, login_as
 ) -> None:
+    # Migration 0031: a deliberate product-owner deviation from the PRD §3
+    # matrix (which genuinely marks this "-" for Receptionist) — front-desk
+    # OPD-queue vitals triage coverage alongside Nurse, not a gap fix.
     branch_id = await _create_branch(api_client, owner_headers, "ReceptionistVitalsBranch")
     patient_id = await _create_patient(api_client, owner_headers, phone="+919876900004")
     encounter_id = await _register_walk_in(api_client, owner_headers, patient_id=patient_id, branch_id=branch_id)
 
     headers, _ = await login_as(role_code="RECEPTIONIST")
     response = await api_client.post("/api/v1/vitals", json={"encounter_id": encounter_id, "heart_rate": 80}, headers=headers)
-    assert response.status_code == 403
+    assert response.status_code == 201
 
 
 async def test_lab_staff_cannot_record_vitals(api_client: AsyncClient, owner_headers: dict[str, str], test_clinic: Clinic, login_as) -> None:

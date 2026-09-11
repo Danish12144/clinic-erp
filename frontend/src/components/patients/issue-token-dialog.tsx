@@ -1,5 +1,5 @@
 import { ChevronLeft, Loader2, Search, UserRoundSearch } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { EmptyState } from '@/components/shared/empty-state'
 import { Button } from '@/components/ui/button'
@@ -28,6 +28,12 @@ export function IssueTokenDialog({ open, onOpenChange }: { open: boolean; onOpen
   const { data: branches } = useBranches()
   const { data: directory } = useDoctorDirectory()
   const registerWalkIn = useRegisterWalkIn()
+
+  const branchSelectItems = useMemo(() => Object.fromEntries((branches ?? []).map((b) => [b.id, b.name])), [branches])
+  const doctorSelectItems = useMemo(
+    () => Object.fromEntries((directory?.items ?? []).map((d) => [d.user_id, [d.first_name, d.last_name].filter(Boolean).join(' ')])),
+    [directory],
+  )
 
   useEffect(() => {
     if (branches?.length === 1 && open) setBranchId(branches[0].id)
@@ -122,7 +128,13 @@ export function IssueTokenDialog({ open, onOpenChange }: { open: boolean; onOpen
 
             <div className="flex flex-col gap-1.5">
               <Label>Branch *</Label>
-              <Select value={branchId} onValueChange={(value) => setBranchId(value ?? '')}>
+              {/* `items` is what makes the closed trigger show the branch
+                  NAME instead of its raw UUID — base-ui's Select.Value only
+                  resolves a label from this map (or an `itemToStringLabel`),
+                  never from the SelectItem children rendered in the popup;
+                  without it, the trigger falls back to printing the raw
+                  `value` string once something is selected. */}
+              <Select value={branchId} onValueChange={(value) => setBranchId(value ?? '')} items={branchSelectItems}>
                 <SelectTrigger className="w-full">
                   <SelectValue placeholder="Select branch" />
                 </SelectTrigger>
@@ -139,7 +151,7 @@ export function IssueTokenDialog({ open, onOpenChange }: { open: boolean; onOpen
             {directory && directory.items.length > 0 && (
               <div className="flex flex-col gap-1.5">
                 <Label>Doctor (optional)</Label>
-                <Select value={doctorId ?? ''} onValueChange={(value) => setDoctorId(value || undefined)}>
+                <Select value={doctorId ?? ''} onValueChange={(value) => setDoctorId(value || undefined)} items={doctorSelectItems}>
                   <SelectTrigger className="w-full">
                     <SelectValue placeholder="Assign later" />
                   </SelectTrigger>

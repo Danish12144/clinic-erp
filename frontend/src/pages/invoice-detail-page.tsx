@@ -1,4 +1,4 @@
-import { ArrowLeft, Ban, Plus, Receipt, Send, Trash2 } from 'lucide-react'
+import { ArrowLeft, Ban, Plus, Printer, Receipt, Send, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import { toast } from 'sonner'
 import { Link, Navigate, useParams } from 'react-router-dom'
@@ -13,8 +13,11 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { useAuth } from '@/features/auth/auth-context'
 import { useDeleteLineItem, useInvoice, useIssueInvoice } from '@/features/billing/hooks'
+import { useBranches } from '@/features/branches/hooks'
 import { usePatient } from '@/features/patients/hooks'
+import { useMyClinic } from '@/features/tenancy/hooks'
 import { getErrorMessage } from '@/lib/errors'
+import { openInvoicePrintView } from '@/lib/print-invoice'
 
 const SOURCE_LABELS: Record<string, string> = {
   CONSULTATION: 'Consultation',
@@ -33,6 +36,8 @@ export function InvoiceDetailPage() {
   const { hasPermission } = useAuth()
   const { data: invoice, isLoading } = useInvoice(invoiceId)
   const { data: patient } = usePatient(invoice?.patient_id)
+  const { data: clinic } = useMyClinic()
+  const { data: branches } = useBranches()
   const issueInvoice = useIssueInvoice(invoiceId ?? '')
   const deleteLineItem = useDeleteLineItem(invoiceId ?? '')
 
@@ -95,6 +100,40 @@ export function InvoiceDetailPage() {
             <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setPaymentOpen(true)}>
               <Receipt className="size-3.5" />
               Record payment
+            </Button>
+          )}
+          {!isDraft && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="gap-1.5"
+              onClick={() => {
+                const branch = branches?.find((b) => b.id === invoice.branch_id)
+                openInvoicePrintView({
+                  clinicName: clinic?.name ?? 'Clinic',
+                  clinicGstNumber: clinic?.gst_number ?? null,
+                  branchName: branch?.name ?? null,
+                  branchAddress: branch?.address ?? null,
+                  branchPhone: branch?.phone ?? null,
+                  patientName: patient ? [patient.first_name, patient.last_name].filter(Boolean).join(' ') : 'Patient',
+                  patientMrn: patient?.mrn ?? '',
+                  invoiceId: invoice.id,
+                  status: invoice.status,
+                  paymentStatus: invoice.payment_status,
+                  createdAt: invoice.created_at,
+                  lineItems: invoice.line_items,
+                  subtotal: invoice.subtotal,
+                  tax: invoice.tax,
+                  discount: invoice.discount,
+                  total: invoice.total,
+                  totalPaid: invoice.total_paid,
+                  balanceDue: invoice.balance_due,
+                  payments: invoice.payments,
+                })
+              }}
+            >
+              <Printer className="size-3.5" />
+              Print Receipt / Invoice
             </Button>
           )}
           {canManage && !isVoid && (

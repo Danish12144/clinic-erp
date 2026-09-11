@@ -1379,7 +1379,7 @@ SELECT r.id, p.id FROM roles r, permissions p WHERE (r.code, p.code) IN (
   ('RECEPTIONIST','patients.register'), ('RECEPTIONIST','patients.view_demographics'),
   ('RECEPTIONIST','appointments.manage'), ('RECEPTIONIST','appointments.view'),
   ('RECEPTIONIST','doctors.view_directory'), ('RECEPTIONIST','checkin.manage'), ('RECEPTIONIST','checkin.view'),
-  ('RECEPTIONIST','queue.manage'), ('RECEPTIONIST','queue.view'), ('RECEPTIONIST','vitals.view'),
+  ('RECEPTIONIST','queue.manage'), ('RECEPTIONIST','queue.view'), ('RECEPTIONIST','vitals.view'), ('RECEPTIONIST','vitals.record'),
   ('RECEPTIONIST','billing.manage'),
   ('RECEPTIONIST','payments.record'), ('RECEPTIONIST','crm.manage'),
   ('RECEPTIONIST','communications.send'), ('RECEPTIONIST','expenses.record'), ('RECEPTIONIST','pharmacy.sell_otc'), ('RECEPTIONIST','pharmacy.view_catalog'),

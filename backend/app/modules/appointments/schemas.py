@@ -1,13 +1,22 @@
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+# A same-day/instant booking ("book this patient in right now") legitimately
+# submits a scheduled_at of "now" — by the time the request reaches this
+# validator (client clock skew, network latency, the seconds spent filling
+# in a dialog), that value can already read as microseconds in the past,
+# which a strict `> now()` check rejected with a confusing "must be in the
+# future" 422. A short grace window absorbs that without opening the door
+# to genuinely stale/backdated bookings.
+_PAST_GRACE = timedelta(minutes=5)
 
 
 def _validate_future(value: datetime) -> datetime:
     if value.tzinfo is None:
         raise ValueError("scheduled_at must include a timezone offset (e.g. '2026-09-10T10:00:00+05:30')")
-    if value <= datetime.now(timezone.utc):
+    if value <= datetime.now(timezone.utc) - _PAST_GRACE:
         raise ValueError("scheduled_at must be in the future")
     return value
 

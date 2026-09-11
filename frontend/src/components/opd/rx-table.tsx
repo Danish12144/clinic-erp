@@ -1,6 +1,6 @@
-import { Plus, X } from 'lucide-react'
+import { Check, Plus, X } from 'lucide-react'
 import { useState } from 'react'
-import { Controller, useFieldArray, type Control, type UseFormSetValue } from 'react-hook-form'
+import { Controller, useFieldArray, useWatch, type Control, type UseFormSetValue } from 'react-hook-form'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -20,6 +20,11 @@ function MedicineAutocompleteCell({
   const [open, setOpen] = useState(false)
   const { data, isFetching } = useMedicineSearch(query)
   const suggestions = data?.items ?? []
+  // Shown as a small confirmation once a catalog suggestion is actually
+  // picked — otherwise this row stays free-text-only and Pharmacy won't be
+  // able to dispense it against inventory later (see pharmacy-dispense-
+  // page.tsx's own "Not catalog-linked" badge, the other half of this).
+  const linkedMedicineId = useWatch({ control, name: `items.${index}.medicineId` })
 
   return (
     <div className="relative">
@@ -27,22 +32,31 @@ function MedicineAutocompleteCell({
         control={control}
         name={`items.${index}.medicineLabel`}
         render={({ field }) => (
-          <Input
-            {...field}
-            placeholder="Medicine name"
-            autoComplete="off"
-            onChange={(event) => {
-              field.onChange(event.target.value)
-              setQuery(event.target.value)
-              setValue(`items.${index}.medicineId`, undefined)
-              setOpen(true)
-            }}
-            onFocus={() => setOpen(true)}
-            onBlur={() => {
-              // Let a mousedown-selected suggestion register before closing.
-              setTimeout(() => setOpen(false), 150)
-            }}
-          />
+          <div className="relative">
+            <Input
+              {...field}
+              placeholder="Medicine name"
+              autoComplete="off"
+              className={linkedMedicineId ? 'pr-7' : undefined}
+              onChange={(event) => {
+                field.onChange(event.target.value)
+                setQuery(event.target.value)
+                setValue(`items.${index}.medicineId`, undefined)
+                setOpen(true)
+              }}
+              onFocus={() => setOpen(true)}
+              onBlur={() => {
+                // Let a mousedown-selected suggestion register before closing.
+                setTimeout(() => setOpen(false), 150)
+              }}
+            />
+            {linkedMedicineId && (
+              <Check
+                className="pointer-events-none absolute top-1/2 right-2 size-3.5 -translate-y-1/2 text-emerald-600 dark:text-emerald-400"
+                aria-label="Linked to catalog medicine — dispensable"
+              />
+            )}
+          </div>
         )}
       />
       {open && query.trim().length >= 2 && (isFetching || suggestions.length > 0) && (

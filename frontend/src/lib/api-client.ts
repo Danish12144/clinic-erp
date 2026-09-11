@@ -69,9 +69,21 @@ apiClient.interceptors.response.use(
   (response) => response,
   async (error: AxiosError) => {
     const originalRequest = error.config as RetryableRequestConfig | undefined
+    const responseStatus = error.response?.status
 
+    // 403 is treated the same as 401 here, not just "not authorized" —
+    // permission overrides (and any other RBAC change) only take effect on
+    // the affected user's *next token refresh* (see PermissionOverrideService's
+    // own docstring), and an already-logged-in tab has no way to know its
+    // embedded permission list just went stale. Retrying once through a
+    // refresh means a permission an Owner just granted (or a permission the
+    // caller already legitimately holds but whose token was minted before
+    // some other fix) is picked up on the very next action instead of
+    // requiring an explicit logout/login. `_retried` still caps this at one
+    // attempt, so a real, permanent access denial still surfaces as a 403
+    // after that single extra round trip, not an infinite loop.
     if (
-      error.response?.status !== 401 ||
+      (responseStatus !== 401 && responseStatus !== 403) ||
       !originalRequest ||
       originalRequest._retried ||
       isAuthExempt(originalRequest.url)

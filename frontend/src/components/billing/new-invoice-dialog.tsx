@@ -1,5 +1,5 @@
 import { ChevronLeft, Loader2, Search, UserRoundSearch } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
@@ -29,6 +29,10 @@ const MANUAL_SOURCE_TYPES: { value: InvoiceLineSource; label: string }[] = [
   { value: 'LAB', label: 'Lab' },
 ]
 
+function encounterLabel(encounter: { checked_in_at: string; status: string }): string {
+  return `${new Date(encounter.checked_in_at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })} — ${encounter.status}`
+}
+
 export function NewInvoiceDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const navigate = useNavigate()
   const [searchTerm, setSearchTerm] = useState('')
@@ -47,6 +51,28 @@ export function NewInvoiceDialog({ open, onOpenChange }: { open: boolean; onOpen
     queryFn: () => searchEncounters({ patientId: selectedPatient!.id, limit: 10 }),
     enabled: Boolean(selectedPatient),
   })
+
+  // Auto-generate (POST /billing/invoices/auto-generate) 422s with "No
+  // consultation has been started for this encounter yet" against an OPEN
+  // encounter — the dropdown used to offer every encounter regardless of
+  // status, so picking the (often most recent, still-OPEN) one was a real,
+  // reachable "Could not create invoice" failure. Only offer encounters a
+  // consultation actually exists for.
+  const eligibleEncounters = useMemo(
+    () => (encountersQuery.data?.items ?? []).filter((e) => e.status === 'IN_CONSULTATION' || e.status === 'COMPLETED'),
+    [encountersQuery.data],
+  )
+
+  const branchSelectItems = useMemo(() => Object.fromEntries((branches ?? []).map((b) => [b.id, b.name])), [branches])
+  // "Reason" per encounter isn't data this fetch has (chief_complaint lives
+  // on the Consultation, not the Encounter, and joining it would mean one
+  // extra request per row) — status is the closest available stand-in, so
+  // the label is Date / Time / Status rather than a true reason.
+  const encounterSelectItems = useMemo(
+    () => Object.fromEntries(eligibleEncounters.map((e) => [e.id, encounterLabel(e)])),
+    [eligibleEncounters],
+  )
+  const sourceTypeSelectItems = useMemo(() => Object.fromEntries(MANUAL_SOURCE_TYPES.map((o) => [o.value, o.label])), [])
 
   useEffect(() => {
     if (branches?.length === 1 && open) setBranchId(branches[0].id)
@@ -145,7 +171,10 @@ export function NewInvoiceDialog({ open, onOpenChange }: { open: boolean; onOpen
 
             <div className="flex flex-col gap-1.5">
               <Label>Branch *</Label>
-              <Select value={branchId} onValueChange={(value) => setBranchId(value ?? '')}>
+              {/* `items` is what makes the closed trigger show the branch
+                  NAME instead of its raw UUID — see the same note on
+                  IssueTokenDialog's Branch select. */}
+              <Select value={branchId} onValueChange={(value) => setBranchId(value ?? '')} items={branchSelectItems}>
                 <SelectTrigger className="w-full">
                   <SelectValue placeholder="Select branch" />
                 </SelectTrigger>
@@ -163,22 +192,22 @@ export function NewInvoiceDialog({ open, onOpenChange }: { open: boolean; onOpen
               <Label>Auto-generate from consultation (optional)</Label>
               {encountersQuery.isLoading ? (
                 <p className="text-xs text-slate-500">Loading encounters…</p>
-              ) : encountersQuery.data && encountersQuery.data.items.length > 0 ? (
-                <Select value={encounterId ?? ''} onValueChange={(value) => setEncounterId(value || undefined)}>
+              ) : eligibleEncounters.length > 0 ? (
+                <Select value={encounterId ?? ''} onValueChange={(value) => setEncounterId(value || undefined)} items={encounterSelectItems}>
                   <SelectTrigger className="w-full">
                     <SelectValue placeholder="Blank invoice — add line items manually" />
                   </SelectTrigger>
                   <SelectContent>
-                    {encountersQuery.data.items.map((encounter) => (
+                    {eligibleEncounters.map((encounter) => (
                       <SelectItem key={encounter.id} value={encounter.id}>
-                        {new Date(encounter.checked_in_at).toLocaleDateString()} — {encounter.status}
+                        {encounterLabel(encounter)}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               ) : (
                 <p className="text-xs text-slate-500 dark:text-slate-400">
-                  No encounters found for this patient — will create a blank invoice.
+                  No consultations found for this patient yet — will create a blank invoice.
                 </p>
               )}
             </div>
@@ -186,7 +215,7 @@ export function NewInvoiceDialog({ open, onOpenChange }: { open: boolean; onOpen
             {!encounterId && (
               <div className="flex flex-col gap-1.5">
                 <Label>Invoice type</Label>
-                <Select value={sourceType} onValueChange={(value) => setSourceType((value ?? 'OTHER') as InvoiceLineSource)}>
+                <Select value={sourceType} onValueChange={(value) => setSourceType((value ?? 'OTHER') as InvoiceLineSource)} items={sourceTypeSelectItems}>
                   <SelectTrigger className="w-full">
                     <SelectValue />
                   </SelectTrigger>

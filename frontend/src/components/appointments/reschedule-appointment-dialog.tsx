@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useRescheduleAppointment } from '@/features/appointments/hooks'
 import type { AppointmentSummary } from '@/features/appointments/types'
 import { getErrorMessage } from '@/lib/errors'
-import { formatDateInput } from '@/lib/working-hours'
+import { formatDateInput, isSchedulableMoment } from '@/lib/working-hours'
 
 const DURATION_OPTIONS = [15, 30, 45, 60]
 
@@ -38,7 +38,7 @@ export function RescheduleAppointmentDialog({
   async function handleReschedule() {
     if (!appointment || !dateValue || !timeValue) return
     const scheduledAt = new Date(`${dateValue}T${timeValue}:00`)
-    if (Number.isNaN(scheduledAt.getTime()) || scheduledAt <= new Date()) {
+    if (Number.isNaN(scheduledAt.getTime()) || !isSchedulableMoment(scheduledAt)) {
       toast.error('Pick a future date and time')
       return
     }

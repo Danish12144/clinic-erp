@@ -45,6 +45,17 @@ export function slotToDate(baseDate: Date, minutesFromMidnight: number): Date {
   return result
 }
 
+// Mirrors backend/app/modules/appointments/schemas.py's `_validate_future`
+// grace window — an instant/same-day booking submitted for "right now" can
+// already read as a few seconds/minutes in the past by the time it's typed
+// and submitted, so a strict "must be later than this exact instant" check
+// would reject a legitimate immediate booking with a confusing error.
+const SCHEDULING_PAST_GRACE_MS = 5 * 60_000
+
+export function isSchedulableMoment(date: Date): boolean {
+  return date.getTime() > Date.now() - SCHEDULING_PAST_GRACE_MS
+}
+
 export function formatDateInput(date: Date): string {
   const yyyy = date.getFullYear()
   const mm = String(date.getMonth() + 1).padStart(2, '0')

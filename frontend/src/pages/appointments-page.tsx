@@ -61,6 +61,16 @@ export function AppointmentsPage() {
   const selectedDoctor = doctors.find((d) => d.userId === doctorId)
   const selectedDate = useMemo(() => new Date(`${dateValue}T00:00:00`), [dateValue])
 
+  // `items` is what makes each Select's closed trigger show a friendly
+  // name instead of the raw UUID `value` — base-ui's Select.Value only
+  // resolves a label from this map, never from the SelectItem children
+  // rendered in the popup list. See issue-token-dialog.tsx's own note.
+  const doctorSelectItems = useMemo(
+    () => Object.fromEntries(doctors.map((d) => [d.userId, d.specialization ? `${d.name} — ${d.specialization}` : d.name])),
+    [doctors],
+  )
+  const branchSelectItems = useMemo(() => Object.fromEntries((branches ?? []).map((b) => [b.id, b.name])), [branches])
+
   const dayHours = selectedDoctor ? dayHoursFor(selectedDoctor.workingHours, selectedDate) : null
   const slots = dayHours ? generateTimeSlots(dayHours.open, dayHours.close, SLOT_INCREMENT_MINUTES) : []
 
@@ -112,6 +122,7 @@ export function AppointmentsPage() {
               const doc = doctors.find((d) => d.userId === value)
               setBranchId(doc?.branchIds[0] ?? '')
             }}
+            items={doctorSelectItems}
           >
             <SelectTrigger className="w-full sm:w-56">
               <SelectValue placeholder={doctorsLoading ? 'Loading…' : 'Select doctor'} />
@@ -130,7 +141,7 @@ export function AppointmentsPage() {
         {branches && branches.length > 1 && (
           <div className="flex flex-col gap-1.5">
             <Label>Branch</Label>
-            <Select value={branchId} onValueChange={(value) => setBranchId(value ?? '')}>
+            <Select value={branchId} onValueChange={(value) => setBranchId(value ?? '')} items={branchSelectItems}>
               <SelectTrigger className="w-full sm:w-48">
                 <SelectValue placeholder="Select branch" />
               </SelectTrigger>

@@ -7,7 +7,7 @@ import { Label } from '@/components/ui/label'
 import { useRescheduleMyAppointment } from '@/features/appointments/hooks'
 import type { AppointmentSummary } from '@/features/appointments/types'
 import { getErrorMessage } from '@/lib/errors'
-import { formatDateInput } from '@/lib/working-hours'
+import { formatDateInput, isSchedulableMoment } from '@/lib/working-hours'
 
 export function RescheduleMyAppointmentDialog({
   appointment,
@@ -33,7 +33,7 @@ export function RescheduleMyAppointmentDialog({
   async function handleReschedule() {
     if (!appointment || !dateValue || !timeValue) return
     const scheduledAt = new Date(`${dateValue}T${timeValue}:00`)
-    if (Number.isNaN(scheduledAt.getTime()) || scheduledAt <= new Date()) {
+    if (Number.isNaN(scheduledAt.getTime()) || !isSchedulableMoment(scheduledAt)) {
       toast.error('Pick a future date and time')
       return
     }
