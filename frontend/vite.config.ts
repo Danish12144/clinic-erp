@@ -22,5 +22,11 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     setupFiles: ['./src/test/setup.ts'],
+    // Vitest's default include glob matches *.spec.ts anywhere, which
+    // would otherwise also pick up e2e/*.spec.ts (Playwright's own tests,
+    // run via `npm run test:e2e`, not `npm run test`) and fail with
+    // "test() from an async describe() block" — Playwright's test() has
+    // a different signature than Vitest's.
+    exclude: ['**/node_modules/**', '**/e2e/**'],
   },
 })
