@@ -22,11 +22,25 @@ function formatAge(dateOfBirth: string | null | undefined): string {
 
 // canManageConsultation is Doctor/Owner (consultation.manage) -- they get
 // the existing Start/Continue flow into the full clinical pad. Anyone
-// else who reached this page at all only has vitals.record (Nurse) --
-// they get a "Record vitals" action instead, opening a scoped-down dialog
-// rather than the full pad they have no permission to use. See
-// OpdQueuePage's own comment for why this page serves both audiences now.
-function QueueActionCell({ row, canManageConsultation, onRecordVitals }: { row: OpdQueueRow; canManageConsultation: boolean; onRecordVitals: (encounterId: string) => void }) {
+// else who reached this page holds either vitals.record (Nurse by
+// default, or any role an Owner has granted it to via a permission
+// override) or only queue.view (Receptionist by default — monitor tokens
+// read-only, no vitals-recording permission at all). canRecordVitals is
+// checked explicitly here rather than inferred from "not
+// canManageConsultation," so a view-only caller sees a plain status badge
+// instead of a "Record vitals" button that would just 403 on click. See
+// OpdQueuePage's own comment for why this page serves all three audiences.
+function QueueActionCell({
+  row,
+  canManageConsultation,
+  canRecordVitals,
+  onRecordVitals,
+}: {
+  row: OpdQueueRow
+  canManageConsultation: boolean
+  canRecordVitals: boolean
+  onRecordVitals: (encounterId: string) => void
+}) {
   const navigate = useNavigate()
   const startConsultation = useStartConsultation()
 
@@ -35,7 +49,7 @@ function QueueActionCell({ row, canManageConsultation, onRecordVitals }: { row: 
   }
 
   if (!canManageConsultation) {
-    if (row.encounter.status === 'OPEN' || row.encounter.status === 'IN_CONSULTATION') {
+    if (canRecordVitals && (row.encounter.status === 'OPEN' || row.encounter.status === 'IN_CONSULTATION')) {
       return (
         <Button size="sm" variant="outline" className="gap-1" onClick={() => onRecordVitals(row.encounter!.id)}>
           <Activity className="size-3.5" />
@@ -90,11 +104,13 @@ function QueueActionCell({ row, canManageConsultation, onRecordVitals }: { row: 
 export function OpdQueuePage() {
   const { user, hasPermission } = useAuth()
   // consultation.manage holders (Doctor/Owner) see their own queue, same
-  // as before. Anyone else who reached this page only has vitals.record
-  // (Nurse) -- there's no "own queue" concept for a role that doesn't run
-  // consultations, so they see the whole branch's active queue instead
-  // (useDoctorOpdQueue(undefined) omits the doctor_id filter entirely).
+  // as before. Anyone else who reached this page (Nurse by default, or
+  // Receptionist/any role via queue.view or a vitals.record override) has
+  // no "own queue" concept — there's no consultation to be "theirs" — so
+  // they see the whole branch's active queue instead (useDoctorOpdQueue
+  // (undefined) omits the doctor_id filter entirely).
   const canManageConsultation = hasPermission('consultation.manage')
+  const canRecordVitals = hasPermission('vitals.record')
   const { rows, isLoading, isFetching, refetch } = useDoctorOpdQueue(canManageConsultation ? user?.id : undefined)
   const [vitalsEncounterId, setVitalsEncounterId] = useState<string | null>(null)
 
@@ -104,7 +120,12 @@ export function OpdQueuePage() {
         <div>
           <h1 className="text-xl font-semibold text-slate-900 dark:text-slate-50">OPD Queue</h1>
           <p className="text-sm text-slate-500 dark:text-slate-400">
-            {canManageConsultation ? 'Your active patients today.' : "Today's active patients, clinic-wide."} Refreshes automatically.
+            {canManageConsultation
+              ? 'Your active patients today.'
+              : canRecordVitals
+                ? "Today's active patients, clinic-wide."
+                : "Today's active patients, clinic-wide — view only."}{' '}
+            Refreshes automatically.
           </p>
         </div>
         <Button variant="outline" size="sm" className="gap-1.5" onClick={() => void refetch()}>
@@ -168,7 +189,12 @@ export function OpdQueuePage() {
                     <StatusBadge status={row.token.status} />
                   </TableCell>
                   <TableCell className="text-right">
-                    <QueueActionCell row={row} canManageConsultation={canManageConsultation} onRecordVitals={setVitalsEncounterId} />
+                    <QueueActionCell
+                      row={row}
+                      canManageConsultation={canManageConsultation}
+                      canRecordVitals={canRecordVitals}
+                      onRecordVitals={setVitalsEncounterId}
+                    />
                   </TableCell>
                 </TableRow>
               ))}

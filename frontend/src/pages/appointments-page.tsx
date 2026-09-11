@@ -7,7 +7,7 @@ import { RescheduleAppointmentDialog } from '@/components/appointments/reschedul
 import { EmptyState } from '@/components/shared/empty-state'
 import { StatusBadge } from '@/components/shared/status-badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent } from '@/components/ui/card'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -105,6 +105,19 @@ export function AppointmentsPage() {
     })
   }
 
+  // The grid above only ever covers the doctor's declared working hours
+  // (and renders nothing at all when the doctor has none configured for
+  // this day) — an appointment booked outside that window via "Book at a
+  // custom time" (or on a day the doctor has no hours set) would
+  // otherwise be booked successfully but never appear anywhere on this
+  // page. Anything not claimed by a grid slot is shown here instead, so
+  // every appointment for the selected date stays visible and actionable
+  // regardless of when it falls.
+  const gridMatchedIds = new Set(slots.map((slot) => appointmentForSlot(slot)?.id).filter((id): id is string => Boolean(id)))
+  const offHoursAppointments = appointments
+    .filter((a) => !gridMatchedIds.has(a.id))
+    .sort((a, b) => new Date(a.scheduled_at).getTime() - new Date(b.scheduled_at).getTime())
+
   return (
     <div className="flex flex-col gap-4 p-4 sm:p-6">
       <div>
@@ -176,41 +189,94 @@ export function AppointmentsPage() {
           title="No branch assigned"
           description="This doctor isn't assigned to any branch yet — assign one from Staff Directory before booking."
         />
-      ) : !dayHours ? (
-        <EmptyState
-          icon={CalendarX2}
-          title="Not available on this day"
-          description="This doctor has no working hours configured for the selected date."
-        />
       ) : (
-        <Card>
-          <CardContent className="flex flex-col divide-y divide-slate-100 p-0 dark:divide-slate-800">
-            {appointmentsLoading &&
-              Array.from({ length: 4 }).map((_, i) => (
-                <div key={i} className="flex items-center gap-3 p-3">
-                  <Skeleton className="h-4 w-16" />
-                  <Skeleton className="h-4 flex-1" />
-                </div>
-              ))}
+        <>
+          {!dayHours ? (
+            <EmptyState
+              icon={CalendarX2}
+              title="Not available on this day"
+              description="This doctor has no working hours configured for the selected date — any appointment already booked for it still appears below."
+            />
+          ) : (
+            <Card>
+              <CardContent className="flex flex-col divide-y divide-slate-100 p-0 dark:divide-slate-800">
+                {appointmentsLoading &&
+                  Array.from({ length: 4 }).map((_, i) => (
+                    <div key={i} className="flex items-center gap-3 p-3">
+                      <Skeleton className="h-4 w-16" />
+                      <Skeleton className="h-4 flex-1" />
+                    </div>
+                  ))}
 
-            {!appointmentsLoading &&
-              slots.map((slot) => {
-                const appointment = appointmentForSlot(slot)
-                const patient = appointment ? patientsById.get(appointment.patient_id) : undefined
-                const canManage = appointment && ACTIVE_APPOINTMENT_STATUSES.has(appointment.status)
+                {!appointmentsLoading &&
+                  slots.map((slot) => {
+                    const appointment = appointmentForSlot(slot)
+                    const patient = appointment ? patientsById.get(appointment.patient_id) : undefined
+                    const canManage = appointment && ACTIVE_APPOINTMENT_STATUSES.has(appointment.status)
 
-                return (
-                  <div key={slot.minutesFromMidnight} className="flex items-center justify-between gap-3 px-3 py-2.5">
-                    <span className="w-14 shrink-0 font-mono text-sm text-slate-500 dark:text-slate-400">{slot.label}</span>
-                    {!appointment ? (
-                      <button
-                        type="button"
-                        className="flex-1 rounded-md border border-dashed border-slate-200 px-3 py-1.5 text-left text-sm text-slate-400 transition-colors hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-700 dark:border-slate-800 dark:hover:bg-indigo-500/10 dark:hover:text-indigo-400"
-                        onClick={() => setBookingSlot(slot)}
-                      >
-                        Available — click to book
-                      </button>
-                    ) : (
+                    return (
+                      <div key={slot.minutesFromMidnight} className="flex items-center justify-between gap-3 px-3 py-2.5">
+                        <span className="w-14 shrink-0 font-mono text-sm text-slate-500 dark:text-slate-400">{slot.label}</span>
+                        {!appointment ? (
+                          <button
+                            type="button"
+                            className="flex-1 rounded-md border border-dashed border-slate-200 px-3 py-1.5 text-left text-sm text-slate-400 transition-colors hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-700 dark:border-slate-800 dark:hover:bg-indigo-500/10 dark:hover:text-indigo-400"
+                            onClick={() => setBookingSlot(slot)}
+                          >
+                            Available — click to book
+                          </button>
+                        ) : (
+                          <div className="flex flex-1 items-center justify-between gap-3">
+                            <div className="flex flex-col">
+                              <span className="text-sm font-medium text-slate-900 dark:text-slate-100">
+                                {patient ? [patient.first_name, patient.last_name].filter(Boolean).join(' ') : <Skeleton className="h-4 w-24" />}
+                              </span>
+                              <span className="text-xs text-slate-500 dark:text-slate-400">{appointment.duration_minutes} min</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <StatusBadge status={appointment.status} />
+                              {canManage && (
+                                <>
+                                  <Button variant="ghost" size="sm" onClick={() => setReschedulingAppointment(appointment)}>
+                                    Reschedule
+                                  </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="text-destructive"
+                                    onClick={() => setCancellingAppointmentId(appointment.id)}
+                                  >
+                                    Cancel
+                                  </Button>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+              </CardContent>
+            </Card>
+          )}
+
+          {!appointmentsLoading && offHoursAppointments.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Off-hours / Custom appointments</CardTitle>
+                <p className="text-sm text-slate-500 dark:text-slate-400">
+                  Booked outside the regular schedule grid above (before/after working hours, or via "Book at a custom time").
+                </p>
+              </CardHeader>
+              <CardContent className="flex flex-col divide-y divide-slate-100 p-0 dark:divide-slate-800">
+                {offHoursAppointments.map((appointment) => {
+                  const patient = patientsById.get(appointment.patient_id)
+                  const canManage = ACTIVE_APPOINTMENT_STATUSES.has(appointment.status)
+                  const time = new Date(appointment.scheduled_at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+
+                  return (
+                    <div key={appointment.id} className="flex items-center justify-between gap-3 px-3 py-2.5">
+                      <span className="w-14 shrink-0 font-mono text-sm text-slate-500 dark:text-slate-400">{time}</span>
                       <div className="flex flex-1 items-center justify-between gap-3">
                         <div className="flex flex-col">
                           <span className="text-sm font-medium text-slate-900 dark:text-slate-100">
@@ -237,12 +303,13 @@ export function AppointmentsPage() {
                           )}
                         </div>
                       </div>
-                    )}
-                  </div>
-                )
-              })}
-          </CardContent>
-        </Card>
+                    </div>
+                  )
+                })}
+              </CardContent>
+            </Card>
+          )}
+        </>
       )}
 
       {selectedDoctor && branchId && bookingSlot && (

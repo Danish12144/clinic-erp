@@ -55,7 +55,7 @@ const NAV_ITEMS: NavItem[] = [
   { to: '/appointments', label: 'Appointments', icon: CalendarClock, permission: 'appointments.manage' },
   { to: '/patients', label: 'Patients', icon: Users, permission: 'patients.view_demographics' },
   { to: '/leads', label: 'Leads', icon: UserRoundPlus, permission: 'leads.manage' },
-  { to: '/opd', label: 'OPD Queue', icon: ClipboardList, permission: ['consultation.manage', 'vitals.record'] },
+  { to: '/opd', label: 'OPD Queue', icon: ClipboardList, permission: ['consultation.manage', 'vitals.record', 'queue.view'] },
   { to: '/billing', label: 'Billing', icon: Receipt, permission: ['billing.manage', 'billing.view_own'] },
   { to: '/reports', label: 'Reports', icon: BarChart3, permission: ['dashboard.view', 'dashboard.view_own'] },
   { to: '/pharmacy', label: 'Pharmacy', icon: Pill, permission: 'pharmacy.view_catalog' },

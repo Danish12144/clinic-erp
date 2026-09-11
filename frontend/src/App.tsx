@@ -108,12 +108,19 @@ export default function App() {
                 <Route
                   path="/opd"
                   element={
-                    // Also open to vitals.record (Nurse) — the queue LIST
-                    // is the one place a Nurse can find a patient to
-                    // record vitals against, even though they can't
-                    // manage a consultation. The full pad below stays
-                    // consultation.manage-only.
-                    <RequirePermission permission={['consultation.manage', 'vitals.record']} redirectTo="/appointments">
+                    // Also open to vitals.record (Nurse, and any role an
+                    // Owner has granted it to via a permission override —
+                    // see PermissionOverrideDialog) — the queue LIST is
+                    // the one place they can find a patient to record
+                    // vitals against, even without consultation.manage.
+                    // queue.view (Owner/Doctor/Receptionist/Nurse by
+                    // default) additionally lets a role with no vitals
+                    // write access still monitor live tokens read-only —
+                    // QueueActionCell itself decides whether to render the
+                    // "Record vitals" button or just a status badge based
+                    // on whether the caller actually holds vitals.record.
+                    // The full pad below stays consultation.manage-only.
+                    <RequirePermission permission={['consultation.manage', 'vitals.record', 'queue.view']} redirectTo="/appointments">
                       <OpdQueuePage />
                     </RequirePermission>
                   }
