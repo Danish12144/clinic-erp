@@ -15,8 +15,13 @@ from app.modules.appointments.schemas import (
 
 _FUTURE = datetime.now(timezone.utc) + timedelta(days=2)
 _PAST = datetime.now(timezone.utc) - timedelta(days=2)
-_JUST_NOW = datetime.now(timezone.utc) - timedelta(minutes=1)
-_WELL_PAST_GRACE = datetime.now(timezone.utc) - timedelta(minutes=10)
+# NOT module-level constants like _FUTURE/_PAST above: pytest imports this
+# module once at collection time, but the full suite (unit + integration +
+# tenant_isolation, `python -m pytest` with no path) can easily take
+# several minutes to actually reach this specific test — a "1 minute ago"
+# value frozen at import time can genuinely be >5 minutes stale by the
+# time the test body runs, which flips the grace-window assertion. Compute
+# these fresh, inside the test, right before constructing the request.
 
 
 class TestMyAppointmentCreateRequest:
@@ -33,12 +38,14 @@ class TestMyAppointmentCreateRequest:
         # read as a few seconds/minutes in the past by the time it reaches
         # this validator (client clock skew, network latency) — a 5-minute
         # grace window absorbs that instead of 422ing a legitimate booking.
-        req = MyAppointmentCreateRequest(branch_id=uuid.uuid4(), doctor_id=uuid.uuid4(), scheduled_at=_JUST_NOW)
-        assert req.scheduled_at == _JUST_NOW
+        just_now = datetime.now(timezone.utc) - timedelta(minutes=1)
+        req = MyAppointmentCreateRequest(branch_id=uuid.uuid4(), doctor_id=uuid.uuid4(), scheduled_at=just_now)
+        assert req.scheduled_at == just_now
 
     def test_rejects_a_datetime_well_past_the_grace_window(self) -> None:
+        well_past_grace = datetime.now(timezone.utc) - timedelta(minutes=10)
         with pytest.raises(ValidationError):
-            MyAppointmentCreateRequest(branch_id=uuid.uuid4(), doctor_id=uuid.uuid4(), scheduled_at=_WELL_PAST_GRACE)
+            MyAppointmentCreateRequest(branch_id=uuid.uuid4(), doctor_id=uuid.uuid4(), scheduled_at=well_past_grace)
 
     def test_rejects_naive_datetime_without_timezone(self) -> None:
         with pytest.raises(ValidationError):
