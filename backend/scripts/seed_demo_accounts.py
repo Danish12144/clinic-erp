@@ -40,6 +40,20 @@ doctor_profiles, not just users, and 422s with "Doctor does not exist"
 without one. See `scripts/fix_demo_doctor_profile.py` for the one-off
 repair this same fix was back-ported from.
 
+Every account (not just DOCTOR) also gets a `user_branch_assignments` row
+for the clinic's first branch — discovered missing live too, the same
+way: the staff Appointments page refuses to show a booking calendar for
+a doctor with no branch assignment ("This doctor isn't assigned to any
+branch yet"). `UserBranchAssignment` is generic to any role (Staff
+Management reuses the same table), so this isn't doctor-specific the way
+the profile fix above is. See `scripts/fix_demo_branch_assignments.py`
+for the one-off repair this was back-ported from — that script also
+covers every *other* active user in the tenant (accounts created through
+the real invite flow, which has its own, different version of this gap:
+no UI anywhere currently lets you set a branch at invite time), which
+this seed script deliberately does not attempt, since it only owns its
+own 7 fixed accounts.
+
 Usage (run from backend/, DATABASE_URL already pointed at the target DB):
 
     .venv/Scripts/python.exe -m scripts.seed_demo_accounts
@@ -54,6 +68,7 @@ from app.core.db import platform_admin_session
 from app.core.security import hash_password
 from app.modules.auth.models import Role, User, UserStatus
 from app.modules.doctors.models import DoctorProfile
+from app.modules.doctors.repository import BranchAssignmentRepository
 from app.modules.tenancy.models import Branch, Clinic, ClinicStatus
 
 CLINIC_SLUG = "my-clinic"
@@ -85,10 +100,20 @@ async def seed() -> None:
             clinic = Clinic(name=CLINIC_NAME, slug=CLINIC_SLUG, status=ClinicStatus.ACTIVE)
             session.add(clinic)
             await session.flush()
-            session.add(Branch(tenant_id=clinic.id, name="Main Branch"))
+            branch = Branch(tenant_id=clinic.id, name="Main Branch")
+            session.add(branch)
+            await session.flush()
             print(f'Created clinic "{CLINIC_SLUG}" ({clinic.id}).')
         else:
+            branch = (
+                await session.execute(select(Branch).where(Branch.tenant_id == clinic.id).order_by(Branch.created_at))
+            ).scalars().first()
             print(f'Clinic "{CLINIC_SLUG}" already exists ({clinic.id}) - reusing it.')
+        if branch is None:
+            print(f'Clinic "{CLINIC_SLUG}" has no branches at all - cannot assign one.', file=sys.stderr)
+            sys.exit(1)
+
+        branch_repo = BranchAssignmentRepository(session)
 
         roles = {r.code: r for r in (await session.execute(select(Role))).scalars().all()}
         missing_roles = {role_code for _, _, role_code, _, _ in ACCOUNTS} - set(roles)
@@ -139,6 +164,13 @@ async def seed() -> None:
                     profile.working_hours = DOCTOR_WORKING_HOURS
                     profile.consultation_fee = profile.consultation_fee or DOCTOR_CONSULTATION_FEE
                     print(f"           + doctor_profiles row already existed - refreshed")
+
+            existing_branch_ids = await branch_repo.get_branch_ids(user.id)
+            if branch.id not in existing_branch_ids:
+                await branch_repo.set_branch_assignments(
+                    tenant_id=clinic.id, user_id=user.id, branch_ids=[*existing_branch_ids, branch.id]
+                )
+                print(f"           + assigned to branch '{branch.name}'")
         # Transaction commits on clean exit of the `async with` block.
 
     print(f'\nDone. Log in at POST /api/v1/auth/staff/login with {{"clinic_slug": "{CLINIC_SLUG}", "identifier": "<email>", "password": "<password>"}}')
