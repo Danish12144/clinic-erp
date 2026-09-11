@@ -134,7 +134,7 @@ class AuthService:
             if user is None:
                 return generic_response
 
-            code = security.generate_otp_code()
+            code = settings.otp_static_code or security.generate_otp_code()
             otp_repo = OtpRepository(session)
             await otp_repo.create(
                 tenant_id=tenant_id,
@@ -144,7 +144,11 @@ class AuthService:
             )
             await self._otp_sender.send(phone=phone, code=code)
 
-        if settings.is_production:
+        # A static demo code has no secrecy to defeat by echoing it back —
+        # see Settings.otp_static_code's own docstring — so it's revealed
+        # even in production, unlike a real random code.
+        reveal_code = settings.otp_static_code is not None or not settings.is_production
+        if not reveal_code:
             return generic_response
         return OtpRequestResponse(message=generic_response.message, debug_code=code)
 

@@ -1,4 +1,5 @@
 import json
+import re
 from functools import lru_cache
 from typing import Annotated
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -56,6 +57,28 @@ class Settings(BaseSettings):
 
     otp_expire_minutes: int = 5
     otp_max_attempts: int = 5
+
+    # Demo/staging mode: when set, every patient OTP request issues this
+    # exact code instead of a random one, AND the response's debug_code
+    # reveals it even when is_production is True (see AuthService.
+    # request_patient_otp) — normally debug_code is hidden in production
+    # specifically because a real random code leaking in a response would
+    # defeat the point of it being secret; a fixed demo code has no
+    # secrecy to defeat; anyone testing already knows it. Unset (the
+    # default) is byte-for-byte the original behavior: a real random code,
+    # hidden in production. Never set this against a database with real
+    # patients — it makes every one of their accounts loggable-into with a
+    # publicly-known code. Validated as exactly 6 digits, same format
+    # security.generate_otp_code() itself produces, so a typo here can't
+    # silently create a code verify_patient_otp could never match.
+    otp_static_code: str | None = None
+
+    @field_validator("otp_static_code")
+    @classmethod
+    def _validate_otp_static_code(cls, value: str | None) -> str | None:
+        if value is not None and not re.fullmatch(r"\d{6}", value):
+            raise ValueError("otp_static_code must be exactly 6 digits, e.g. '123456'")
+        return value
 
     staff_invite_expire_hours: int = 72
 

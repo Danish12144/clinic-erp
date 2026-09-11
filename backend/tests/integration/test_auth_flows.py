@@ -8,6 +8,7 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy import select
 
+from app.core.config import get_settings
 from app.core.db import platform_admin_session
 from app.modules.auth.models import Permission, PermissionOverride
 from app.modules.patients.models import Patient
@@ -302,3 +303,67 @@ async def test_sessions_can_be_listed_and_revoked(api_client: AsyncClient, test_
         json={"clinic_slug": test_clinic.slug, "refresh_token": login.json()["refresh_token"]},
     )
     assert reuse.status_code == 401
+
+
+async def test_otp_static_code_is_issued_and_revealed_even_when_is_production(
+    api_client: AsyncClient, test_clinic: Clinic, make_patient_user, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The whole point of otp_static_code: unblock demo/staging login
+    testing without server log access, even on a deployment running
+    ENVIRONMENT=production (Render's real config) -- confirmed by forcing
+    is_production True in the same test, not just testing the setting in
+    isolation."""
+    settings = get_settings()
+    monkeypatch.setattr(settings, "otp_static_code", "123456")
+    monkeypatch.setattr(settings, "environment", "production")
+
+    phone = "+919812345600"
+    await make_patient_user(phone=phone)
+
+    requested = await api_client.post(
+        "/api/v1/auth/patient/otp/request", json={"clinic_slug": test_clinic.slug, "phone": phone}
+    )
+    assert requested.status_code == 200
+    assert requested.json()["debug_code"] == "123456"
+
+    verified = await api_client.post(
+        "/api/v1/auth/patient/otp/verify", json={"clinic_slug": test_clinic.slug, "phone": phone, "code": "123456"}
+    )
+    assert verified.status_code == 200
+
+
+async def test_otp_static_code_still_hides_for_an_unregistered_phone(
+    api_client: AsyncClient, test_clinic: Clinic, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Static-code mode must not weaken the anti-enumeration guarantee --
+    an unregistered phone still gets the same generic, code-free response
+    it always did, static mode or not."""
+    settings = get_settings()
+    monkeypatch.setattr(settings, "otp_static_code", "123456")
+
+    response = await api_client.post(
+        "/api/v1/auth/patient/otp/request", json={"clinic_slug": test_clinic.slug, "phone": "+919800000998"}
+    )
+    assert response.status_code == 200
+    assert response.json()["debug_code"] is None
+
+
+async def test_otp_static_code_unset_preserves_original_production_behavior(
+    api_client: AsyncClient, test_clinic: Clinic, make_patient_user, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With otp_static_code left unset (the default), forcing is_production
+    True must still hide debug_code exactly as before this feature existed
+    -- this is the regression guard for the "byte-for-byte the original
+    behavior" claim in Settings.otp_static_code's own docstring."""
+    settings = get_settings()
+    monkeypatch.setattr(settings, "environment", "production")
+    assert settings.otp_static_code is None
+
+    phone = "+919812345601"
+    await make_patient_user(phone=phone)
+
+    response = await api_client.post(
+        "/api/v1/auth/patient/otp/request", json={"clinic_slug": test_clinic.slug, "phone": phone}
+    )
+    assert response.status_code == 200
+    assert response.json()["debug_code"] is None
