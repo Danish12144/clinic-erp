@@ -4,7 +4,7 @@ import { searchEncounters, searchQueue } from '@/features/checkin/api'
 import { ACTIVE_QUEUE_STATUSES } from '@/features/checkin/types'
 import { useAuth } from '@/features/auth/auth-context'
 import { searchPatients } from '@/features/patients/api'
-import { todayLocalDate, todayLocalRange } from '@/lib/date'
+import { todayLocalRange, todayUTCDate } from '@/lib/date'
 
 export interface DashboardMetric {
   value: number | undefined
@@ -54,7 +54,9 @@ export function useDashboardMetrics() {
     enabled: canViewEncounters,
   })
 
-  const today = todayLocalDate()
+  // token_date is a UTC calendar date — see lib/date.ts::todayUTCDate's
+  // own docstring for why this can't be todayLocalDate().
+  const today = todayUTCDate()
   const activeTokens = useMemo(
     () =>
       (queueQuery.data?.items ?? []).filter(

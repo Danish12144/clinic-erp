@@ -102,19 +102,16 @@ test('golden path: register + check-in -> OPD consultation -> prescription -> bi
 
   await logout(page)
 
-  // ---- 4. Receptionist generates the invoice from the consultation and collects payment ----
+  // ---- 4. Receptionist finds the auto-generated invoice and collects payment ----
+  // ConsultationService.complete_consultation's own best-effort auto-
+  // generate-on-completion call already created a DRAFT CONSULTATION
+  // invoice for this patient back in step 3 — go straight to it rather
+  // than opening "New invoice" and picking "auto-generate from
+  // consultation" again, which would 409 on the duplicate-invoice guard
+  // (no second non-VOID invoice of the same source_type per encounter).
   await login(page, RECEPTIONIST)
   await page.goto('/billing')
-  await page.getByRole('button', { name: 'New invoice' }).click()
-
-  await page.getByPlaceholder('Phone, MRN, or name…').fill(lastName)
-  await page.getByText(`GoldenPath ${lastName}`).click()
-
-  // Auto-generate from the consultation just completed — the only
-  // encounter this fresh patient has.
-  await selectComboboxNearLabel(page, 'Auto-generate from consultation (optional)', /OPEN|IN_CONSULTATION|COMPLETED/)
-
-  await page.getByRole('button', { name: 'Create invoice' }).click()
+  await page.getByRole('row').filter({ hasText: `GoldenPath ${lastName}` }).click()
   await expect(page).toHaveURL(/\/billing\/[0-9a-f-]+$/)
 
   await page.getByRole('button', { name: 'Issue invoice' }).click()

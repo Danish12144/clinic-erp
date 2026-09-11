@@ -6,7 +6,7 @@ import type { QueueTokenSummary } from '@/features/checkin/types'
 import { useAuth } from '@/features/auth/auth-context'
 import { getPatient } from '@/features/patients/api'
 import type { PatientSummary } from '@/features/patients/types'
-import { todayLocalDate } from '@/lib/date'
+import { todayUTCDate } from '@/lib/date'
 
 export interface LiveQueueRow {
   token: QueueTokenSummary
@@ -30,7 +30,9 @@ export function useLiveQueueSnapshot(limit = 6) {
     refetchInterval: 30_000,
   })
 
-  const today = todayLocalDate()
+  // token_date is a UTC calendar date — see lib/date.ts::todayUTCDate's
+  // own docstring for why this can't be todayLocalDate().
+  const today = todayUTCDate()
   const activeTokens = useMemo(
     () =>
       (queueQuery.data?.items ?? [])

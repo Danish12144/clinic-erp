@@ -6,7 +6,7 @@ import { getPatient } from '@/features/patients/api'
 import type { PatientSummary } from '@/features/patients/types'
 import type { EncounterSummary, QueueTokenSummary } from '@/features/checkin/types'
 import { searchQueue } from '@/features/checkin/api'
-import { todayLocalDate } from '@/lib/date'
+import { todayUTCDate } from '@/lib/date'
 
 export interface OpdQueueRow {
   token: QueueTokenSummary
@@ -39,7 +39,10 @@ export function useDoctorOpdQueue(doctorId: string | undefined) {
     refetchInterval: POLL_INTERVAL_MS,
   })
 
-  const today = todayLocalDate()
+  // token_date is a UTC calendar date (see todayUTCDate's own docstring for
+  // why this can't be todayLocalDate() — a real bug this exact mismatch
+  // caused, caught by e2e/collect-fee.spec.ts).
+  const today = todayUTCDate()
   const activeTokens = useMemo(
     () =>
       (queueQuery.data?.items ?? [])
