@@ -1,4 +1,4 @@
-import { BarChart3, Boxes, CalendarClock, ClipboardList, FlaskConical, LayoutDashboard, LogOut, Menu, Pill, Receipt, Stethoscope, UserRoundPlus, Users, Wallet } from 'lucide-react'
+import { BarChart3, Boxes, CalendarClock, ClipboardList, FlaskConical, LayoutDashboard, ListChecks, LogOut, Menu, Pill, Receipt, Settings, Stethoscope, UserRoundPlus, Users, Wallet } from 'lucide-react'
 import { useState } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
 import { RoleBadge } from '@/components/staff/role-badge'
@@ -30,7 +30,7 @@ const NAV_ITEMS: NavItem[] = [
   { to: '/appointments', label: 'Appointments', icon: CalendarClock, permission: 'appointments.manage' },
   { to: '/patients', label: 'Patients', icon: Users, permission: 'patients.view_demographics' },
   { to: '/leads', label: 'Leads', icon: UserRoundPlus, permission: 'leads.manage' },
-  { to: '/opd', label: 'OPD Queue', icon: ClipboardList, permission: 'consultation.manage' },
+  { to: '/opd', label: 'OPD Queue', icon: ClipboardList, permission: ['consultation.manage', 'vitals.record'] },
   { to: '/billing', label: 'Billing', icon: Receipt, permission: ['billing.manage', 'billing.view_own'] },
   { to: '/reports', label: 'Reports', icon: BarChart3, permission: ['dashboard.view', 'dashboard.view_own'] },
   { to: '/pharmacy', label: 'Pharmacy', icon: Pill, permission: 'pharmacy.view_catalog' },
@@ -38,6 +38,8 @@ const NAV_ITEMS: NavItem[] = [
   { to: '/expenses', label: 'Expenses', icon: Wallet, permission: ['expenses.manage', 'expenses.record'] },
   { to: '/lab', label: 'Lab', icon: FlaskConical, permission: ['lab.order', 'lab.enter_results', 'lab.manage_catalog'] },
   { to: '/staff', label: 'Staff Directory', icon: Stethoscope, permission: 'staff.manage' },
+  { to: '/audit-log', label: 'Audit Log', icon: ListChecks, permission: 'audit.view' },
+  { to: '/settings', label: 'Clinic Settings', icon: Settings, permission: 'clinic.manage_settings' },
 ]
 
 function BrandMark() {

@@ -1,6 +1,8 @@
-import { ArrowRight, ClipboardList, Loader2, Play, RefreshCw } from 'lucide-react'
+import { Activity, ArrowRight, ClipboardList, Loader2, Play, RefreshCw } from 'lucide-react'
+import { useState } from 'react'
 import { toast } from 'sonner'
 import { useNavigate } from 'react-router-dom'
+import { RecordVitalsDialog } from '@/components/opd/record-vitals-dialog'
 import { EmptyState } from '@/components/shared/empty-state'
 import { StatusBadge } from '@/components/shared/status-badge'
 import { Badge } from '@/components/ui/badge'
@@ -18,12 +20,34 @@ function formatAge(dateOfBirth: string | null | undefined): string {
   return `${years}y`
 }
 
-function QueueActionCell({ row }: { row: OpdQueueRow }) {
+// canManageConsultation is Doctor/Owner (consultation.manage) -- they get
+// the existing Start/Continue flow into the full clinical pad. Anyone
+// else who reached this page at all only has vitals.record (Nurse) --
+// they get a "Record vitals" action instead, opening a scoped-down dialog
+// rather than the full pad they have no permission to use. See
+// OpdQueuePage's own comment for why this page serves both audiences now.
+function QueueActionCell({ row, canManageConsultation, onRecordVitals }: { row: OpdQueueRow; canManageConsultation: boolean; onRecordVitals: (encounterId: string) => void }) {
   const navigate = useNavigate()
   const startConsultation = useStartConsultation()
 
   if (!row.encounter) {
     return <Loader2 className="size-4 animate-spin text-slate-400" />
+  }
+
+  if (!canManageConsultation) {
+    if (row.encounter.status === 'OPEN' || row.encounter.status === 'IN_CONSULTATION') {
+      return (
+        <Button size="sm" variant="outline" className="gap-1" onClick={() => onRecordVitals(row.encounter!.id)}>
+          <Activity className="size-3.5" />
+          Record vitals
+        </Button>
+      )
+    }
+    return (
+      <Badge variant="outline" className="text-slate-500">
+        {row.encounter.status}
+      </Badge>
+    )
   }
 
   if (row.encounter.status === 'IN_CONSULTATION') {
@@ -64,15 +88,24 @@ function QueueActionCell({ row }: { row: OpdQueueRow }) {
 }
 
 export function OpdQueuePage() {
-  const { user } = useAuth()
-  const { rows, isLoading, isFetching, refetch } = useDoctorOpdQueue(user?.id)
+  const { user, hasPermission } = useAuth()
+  // consultation.manage holders (Doctor/Owner) see their own queue, same
+  // as before. Anyone else who reached this page only has vitals.record
+  // (Nurse) -- there's no "own queue" concept for a role that doesn't run
+  // consultations, so they see the whole branch's active queue instead
+  // (useDoctorOpdQueue(undefined) omits the doctor_id filter entirely).
+  const canManageConsultation = hasPermission('consultation.manage')
+  const { rows, isLoading, isFetching, refetch } = useDoctorOpdQueue(canManageConsultation ? user?.id : undefined)
+  const [vitalsEncounterId, setVitalsEncounterId] = useState<string | null>(null)
 
   return (
     <div className="flex flex-col gap-4 p-4 sm:p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold text-slate-900 dark:text-slate-50">OPD Queue</h1>
-          <p className="text-sm text-slate-500 dark:text-slate-400">Your active patients today. Refreshes automatically.</p>
+          <p className="text-sm text-slate-500 dark:text-slate-400">
+            {canManageConsultation ? 'Your active patients today.' : "Today's active patients, clinic-wide."} Refreshes automatically.
+          </p>
         </div>
         <Button variant="outline" size="sm" className="gap-1.5" onClick={() => void refetch()}>
           <RefreshCw className={`size-3.5 ${isFetching ? 'animate-spin' : ''}`} />
@@ -135,13 +168,15 @@ export function OpdQueuePage() {
                     <StatusBadge status={row.token.status} />
                   </TableCell>
                   <TableCell className="text-right">
-                    <QueueActionCell row={row} />
+                    <QueueActionCell row={row} canManageConsultation={canManageConsultation} onRecordVitals={setVitalsEncounterId} />
                   </TableCell>
                 </TableRow>
               ))}
           </TableBody>
         </Table>
       </div>
+
+      <RecordVitalsDialog encounterId={vitalsEncounterId} open={Boolean(vitalsEncounterId)} onOpenChange={(open) => !open && setVitalsEncounterId(null)} />
     </div>
   )
 }

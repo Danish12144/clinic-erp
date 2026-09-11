@@ -23,11 +23,19 @@ const POLL_INTERVAL_MS = 15_000
 // schemas.py). This hook joins queue -> encounter -> patient client-side,
 // each level fetched in parallel via useQueries, bounded by one doctor's
 // realistically-small daily queue size.
+//
+// `doctorId` is deliberately optional at the query level, not just at the
+// type level — omitting it (rather than "not ready yet") is exactly what
+// a Nurse's own use of this same page needs: Nurse holds vitals.record
+// but not consultation.manage, has no "own" queue the way a Doctor does,
+// and needs the whole branch's active queue to find patients waiting for
+// a vitals reading before the doctor sees them. OpdQueuePage decides
+// which case it's in and passes accordingly — this hook just needs to
+// not gate fetching on doctorId being present.
 export function useDoctorOpdQueue(doctorId: string | undefined) {
   const queueQuery = useQuery({
     queryKey: ['queue', 'doctor', doctorId],
     queryFn: () => searchQueue({ doctorId }),
-    enabled: Boolean(doctorId),
     refetchInterval: POLL_INTERVAL_MS,
   })
 

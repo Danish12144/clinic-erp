@@ -36,6 +36,8 @@ const LabOrdersPage = lazy(() => import('@/pages/lab-orders-page').then((m) => (
 const LabOrderDetailPage = lazy(() => import('@/pages/lab-order-detail-page').then((m) => ({ default: m.LabOrderDetailPage })))
 const LabCatalogPage = lazy(() => import('@/pages/lab-catalog-page').then((m) => ({ default: m.LabCatalogPage })))
 const LeadsPage = lazy(() => import('@/pages/leads-page').then((m) => ({ default: m.LeadsPage })))
+const AuditLogPage = lazy(() => import('@/pages/audit-log-page').then((m) => ({ default: m.AuditLogPage })))
+const AdminSettingsPage = lazy(() => import('@/pages/admin-settings-page').then((m) => ({ default: m.AdminSettingsPage })))
 const PortalLoginPage = lazy(() => import('@/pages/portal/portal-login-page').then((m) => ({ default: m.PortalLoginPage })))
 const PortalHomePage = lazy(() => import('@/pages/portal/portal-home-page').then((m) => ({ default: m.PortalHomePage })))
 const PortalAppointmentsPage = lazy(() =>
@@ -106,7 +108,12 @@ export default function App() {
                 <Route
                   path="/opd"
                   element={
-                    <RequirePermission permission="consultation.manage" redirectTo="/appointments">
+                    // Also open to vitals.record (Nurse) — the queue LIST
+                    // is the one place a Nurse can find a patient to
+                    // record vitals against, even though they can't
+                    // manage a consultation. The full pad below stays
+                    // consultation.manage-only.
+                    <RequirePermission permission={['consultation.manage', 'vitals.record']} redirectTo="/appointments">
                       <OpdQueuePage />
                     </RequirePermission>
                   }
@@ -212,6 +219,22 @@ export default function App() {
                   element={
                     <RequirePermission permission="leads.manage">
                       <LeadsPage />
+                    </RequirePermission>
+                  }
+                />
+                <Route
+                  path="/audit-log"
+                  element={
+                    <RequirePermission permission="audit.view">
+                      <AuditLogPage />
+                    </RequirePermission>
+                  }
+                />
+                <Route
+                  path="/settings"
+                  element={
+                    <RequirePermission permission="clinic.manage_settings">
+                      <AdminSettingsPage />
                     </RequirePermission>
                   }
                 />
