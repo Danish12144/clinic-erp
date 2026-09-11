@@ -2,7 +2,7 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { Stethoscope } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useForm } from 'react-hook-form'
-import { Navigate, useLocation, useNavigate } from 'react-router-dom'
+import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { z } from 'zod'
 import { useAuth } from '@/features/auth/auth-context'
 import { Button } from '@/components/ui/button'
@@ -108,6 +108,12 @@ export function LoginPage() {
             </form>
           </CardContent>
         </Card>
+        <p className="text-sm text-slate-500 dark:text-slate-400">
+          Are you a patient?{' '}
+          <Link to="/portal/login" className="font-medium text-indigo-600 hover:underline dark:text-indigo-400">
+            Go to Patient Portal
+          </Link>
+        </p>
       </div>
     </div>
   )

@@ -1,0 +1,77 @@
+name: Backend CI
+
+# Runs the full backend test suite (unit + integration + tenant_isolation)
+# against a real, disposable Postgres service container — this repo's own
+# test suite is designed to require a real Postgres for anything beyond
+# tests/unit (RLS, enums, generated columns are all Postgres-specific, per
+# tests/conftest.py's own docstring), so unlike the frontend's Vitest run,
+# there's no way to cover the same ground with a lighter in-memory
+# substitute. Path-filtered to backend/** so a frontend-only change
+# doesn't trigger it — mirrors frontend-ci.yml's own scoping.
+on:
+  push:
+    branches: [master]
+    paths: ['backend/**', '.github/workflows/backend-ci.yml']
+  pull_request:
+    paths: ['backend/**', '.github/workflows/backend-ci.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Migrate and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: backend
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: clinic_erp
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d clinic_erp"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      ENVIRONMENT: test
+      JWT_SECRET_KEY: ci-test-secret-not-for-production
+      # DATABASE_URL_SYNC connects as the postgres superuser (needed to run
+      # migrations, which create the app_user role itself — see migration
+      # 0002). DATABASE_URL connects as that same app_user once migrations
+      # have created it, the non-superuser role RLS actually applies to —
+      # connecting the app/tests as postgres would silently bypass every
+      # tenant-isolation guarantee (see CLAUDE.md's own note on this).
+      # app_user's password is migration 0002's own hardcoded dev default,
+      # not a secret to protect.
+      DATABASE_URL_SYNC: postgresql+psycopg2://postgres:postgres@localhost:5432/clinic_erp
+      DATABASE_URL: postgresql+asyncpg://app_user:app_user_dev_password_change_me@localhost:5432/clinic_erp
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-dev.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Run migrations
+        run: python -m alembic upgrade head
+
+      - name: Run tests
+        run: python -m pytest
