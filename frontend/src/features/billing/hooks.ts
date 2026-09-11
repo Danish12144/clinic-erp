@@ -5,6 +5,7 @@ import {
   createInvoice,
   deleteLineItem,
   getInvoice,
+  getMyInvoices,
   issueInvoice,
   recordPayment,
   searchInvoices,
@@ -28,6 +29,15 @@ export function useInvoiceSearch(params: InvoiceSearchParams) {
     queryKey: ['billing', 'invoices', 'search', params],
     queryFn: () => searchInvoices(params),
     placeholderData: keepPreviousData,
+  })
+}
+
+// Patient portal only — billing.view_own, row-scoped server-side to the
+// caller's own patient_id.
+export function useMyInvoices() {
+  return useQuery({
+    queryKey: ['billing', 'invoices', 'me'],
+    queryFn: () => getMyInvoices({}),
   })
 }
 
