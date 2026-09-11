@@ -16,6 +16,7 @@ from datetime import datetime, time, timedelta, timezone
 
 from fastapi import HTTPException, status
 
+from app.core.config import get_settings
 from app.core.db import tenant_session
 from app.modules.appointments.models import Appointment, AppointmentSource, AppointmentStatus
 from app.modules.appointments.repository import AppointmentRepository
@@ -63,15 +64,22 @@ class AppointmentService:
         if end_at.date() != scheduled_at.date():
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Appointment cannot span midnight")
 
-        working_hours = WorkingHours.model_validate(doctor_profile.working_hours or {})
-        day_hours = getattr(working_hours, _WEEKDAY_CODES[scheduled_at.weekday()])
-        if day_hours is None:
-            raise HTTPException(status.HTTP_409_CONFLICT, "Doctor is not available on the requested day")
+        # Pre-launch testing accommodation (Settings.appointment_enforce_
+        # working_hours, default off): skip the doctor's declared window
+        # entirely so booking/instant check-in isn't blocked outside a
+        # doctor's configured hours during end-to-end testing — the
+        # doctor-exists/branch-exists/overlap checks above and below still
+        # apply either way. See that setting's own docstring.
+        if get_settings().appointment_enforce_working_hours:
+            working_hours = WorkingHours.model_validate(doctor_profile.working_hours or {})
+            day_hours = getattr(working_hours, _WEEKDAY_CODES[scheduled_at.weekday()])
+            if day_hours is None:
+                raise HTTPException(status.HTTP_409_CONFLICT, "Doctor is not available on the requested day")
 
-        open_time = time.fromisoformat(day_hours.open)
-        close_time = time.fromisoformat(day_hours.close)
-        if scheduled_at.time() < open_time or end_at.time() > close_time:
-            raise HTTPException(status.HTTP_409_CONFLICT, "Requested time is outside the doctor's working hours")
+            open_time = time.fromisoformat(day_hours.open)
+            close_time = time.fromisoformat(day_hours.close)
+            if scheduled_at.time() < open_time or end_at.time() > close_time:
+                raise HTTPException(status.HTTP_409_CONFLICT, "Requested time is outside the doctor's working hours")
 
         repo = AppointmentRepository(session)
         if await repo.has_overlap(

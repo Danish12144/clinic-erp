@@ -35,6 +35,18 @@ function endOfDay(date: Date): Date {
   return d
 }
 
+// A testing accommodation, mirroring the backend's own
+// Settings.appointment_enforce_working_hours default-off relaxation: the
+// slot grid below only ever offers times within the doctor's declared
+// working hours, so there was no way to open the booking dialog at all
+// outside that window. This button opens it pre-filled with "right now"
+// regardless of working hours/day availability — the backend still
+// validates branch/doctor existence and double-booking either way.
+function nowAsSlot(): TimeSlot {
+  const now = new Date()
+  return { minutesFromMidnight: now.getHours() * 60 + now.getMinutes(), label: now.toTimeString().slice(0, 5) }
+}
+
 export function AppointmentsPage() {
   const { doctors, isLoading: doctorsLoading } = useBookableDoctors()
   const { data: branches } = useBranches()
@@ -137,6 +149,12 @@ export function AppointmentsPage() {
           <Label htmlFor="apptPageDate">Date</Label>
           <Input id="apptPageDate" type="date" value={dateValue} onChange={(e) => setDateValue(e.target.value)} className="w-full sm:w-40" />
         </div>
+
+        {selectedDoctor && branchId && (
+          <Button type="button" variant="outline" onClick={() => setBookingSlot(nowAsSlot())}>
+            Book at a custom time
+          </Button>
+        )}
       </div>
 
       {!doctorId ? (

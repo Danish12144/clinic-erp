@@ -21,6 +21,21 @@ export function usePatientPrescriptions(patientId: string | undefined) {
   })
 }
 
+// Used by the "completed encounter" screen to offer a persistent Print/
+// Download button — the PrescriptionPreviewDialog shown right after
+// finishing a consultation can be unmounted before it's interacted with
+// (a completed-encounter refetch swaps the whole workspace to the
+// read-only "this encounter is completed" view mid-fetch), so this is the
+// reliable fallback: look the prescription back up by encounter_id rather
+// than depending on that transient dialog having stayed mounted.
+export function usePrescriptionsByEncounter(encounterId: string | undefined) {
+  return useQuery({
+    queryKey: ['prescriptions', 'by-encounter', encounterId],
+    queryFn: () => searchPrescriptions({ encounterId, limit: 5 }),
+    enabled: Boolean(encounterId),
+  })
+}
+
 export function useConsultationByEncounter(encounterId: string | undefined) {
   return useQuery({
     queryKey: ['consultations', 'by-encounter', encounterId],

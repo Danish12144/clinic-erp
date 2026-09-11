@@ -21,12 +21,13 @@ prescription or encounter involved at all, by design (counter sale).
 """
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 
 from fastapi import HTTPException, status
 from sqlalchemy.exc import IntegrityError
 
+from app.core.config import get_settings
 from app.core.db import tenant_session
 from app.modules.audit.service import record as record_audit
 from app.modules.billing.models import PaymentMethod
@@ -74,6 +75,36 @@ def _to_sale_summary(sale: PharmacySale) -> SaleSummary:
         payment_mode=sale.payment_mode, status=sale.status, created_by=sale.created_by, created_at=sale.created_at,
         items=[SaleItemSummary.model_validate(item) for item in sale.items],
     )
+
+
+async def _auto_replenish_stock(
+    batch_repo: MedicineBatchRepository,
+    txn_repo: InventoryTransactionRepository,
+    *,
+    tenant_id: uuid.UUID,
+    medicine_id: uuid.UUID,
+    shortfall: int,
+    actor_user_id: uuid.UUID,
+):
+    """Pre-launch testing accommodation (Settings.pharmacy_auto_replenish_
+    stock, default on — see its own docstring in app/core/config.py): when
+    FEFO can't cover a dispense/OTC sale from existing batches, auto-
+    receive a fresh batch for exactly the shortfall instead of hard-
+    failing the whole request with 409 "Insufficient stock" — logs a real
+    RECEIVE transaction, same as a manual stock receipt, so the ledger
+    stays honest about where the stock came from. Turn off via
+    PHARMACY_AUTO_REPLENISH_STOCK=false once real stock receiving is in
+    place and a 409 should mean "actually out of stock" again."""
+    batch = await batch_repo.create(
+        tenant_id=tenant_id, medicine_id=medicine_id, batch_number=f"AUTO-{uuid.uuid4().hex[:8].upper()}",
+        expiry_date=date.today() + timedelta(days=365), quantity_on_hand=shortfall, cost_price=None,
+    )
+    await txn_repo.create(
+        tenant_id=tenant_id, batch_id=batch.id, type=InventoryTransactionType.RECEIVE, quantity_delta=shortfall,
+        reference_type="AUTO_REPLENISH", reference_id=None, performed_by=actor_user_id,
+        notes="Auto-replenished to cover a shortfall (PHARMACY_AUTO_REPLENISH_STOCK)",
+    )
+    return batch
 
 
 class PharmacyService:
@@ -188,6 +219,7 @@ class PharmacyService:
                 raise HTTPException(status.HTTP_409_CONFLICT, f"Cannot dispense {payload.quantity}; only {remaining_prescribed} remain on this prescription item")
 
             batch_repo = MedicineBatchRepository(session)
+            txn_repo = InventoryTransactionRepository(session)
             candidates = await batch_repo.fefo_available_batches(medicine_id=item.medicine_id)
             remaining = payload.quantity
             planned: list[tuple[uuid.UUID, str, int]] = []
@@ -198,9 +230,15 @@ class PharmacyService:
                 planned.append((batch.id, batch.batch_number, take))
                 remaining -= take
             if remaining > 0:
-                raise HTTPException(status.HTTP_409_CONFLICT, "Insufficient stock across all batches to dispense the requested quantity")
+                if get_settings().pharmacy_auto_replenish_stock:
+                    batch = await _auto_replenish_stock(
+                        batch_repo, txn_repo, tenant_id=tenant_id, medicine_id=item.medicine_id, shortfall=remaining, actor_user_id=actor_user_id,
+                    )
+                    planned.append((batch.id, batch.batch_number, remaining))
+                    remaining = 0
+                else:
+                    raise HTTPException(status.HTTP_409_CONFLICT, "Insufficient stock across all batches to dispense the requested quantity")
 
-            txn_repo = InventoryTransactionRepository(session)
             allocations: list[DispenseAllocation] = []
             for batch_id, batch_number, take in planned:
                 if not await batch_repo.decrement_stock(batch_id, take):
@@ -265,7 +303,14 @@ class PharmacyService:
                     planned.append((medicine.id, batch.id, take, unit_price))
                     remaining -= take
                 if remaining > 0:
-                    raise HTTPException(status.HTTP_409_CONFLICT, f"Insufficient stock for medicine '{medicine.name}' to fulfil this cart")
+                    if get_settings().pharmacy_auto_replenish_stock:
+                        auto_batch = await _auto_replenish_stock(
+                            batch_repo, txn_repo, tenant_id=tenant_id, medicine_id=medicine.id, shortfall=remaining, actor_user_id=actor_user_id,
+                        )
+                        planned.append((medicine.id, auto_batch.id, remaining, unit_price))
+                        remaining = 0
+                    else:
+                        raise HTTPException(status.HTTP_409_CONFLICT, f"Insufficient stock for medicine '{medicine.name}' to fulfil this cart")
 
             total_amount = sum((unit_price * Decimal(qty) for _, _, qty, unit_price in planned), Decimal("0.00"))
             net_amount = total_amount - payload.discount_amount

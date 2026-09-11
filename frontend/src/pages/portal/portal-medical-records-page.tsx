@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { usePatientEmrTimeline } from '@/features/emr/hooks'
 import { useMyPatient } from '@/features/patients/hooks'
+import { celsiusToFahrenheit } from '@/lib/temperature'
 
 function formatDateTime(iso: string): string {
   return new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
@@ -83,7 +84,7 @@ export function PortalMedicalRecordsPage() {
                   <p className="text-sm font-medium text-slate-900 dark:text-slate-100">{formatDateTime(prescription.issued_at)}</p>
                   {prescription.pdf_document_id && (
                     <Button variant="outline" size="sm" onClick={() => setPreviewDocumentId(prescription.pdf_document_id)}>
-                      View PDF
+                      Print / Download PDF
                     </Button>
                   )}
                 </div>
@@ -120,7 +121,9 @@ export function PortalMedicalRecordsPage() {
                   </span>
                 )}
                 {vitals.heart_rate && <span className="text-slate-600 dark:text-slate-400">Pulse {vitals.heart_rate}</span>}
-                {vitals.temperature_celsius && <span className="text-slate-600 dark:text-slate-400">{vitals.temperature_celsius}°C</span>}
+                {vitals.temperature_celsius != null && (
+                  <span className="text-slate-600 dark:text-slate-400">{celsiusToFahrenheit(vitals.temperature_celsius)}°F</span>
+                )}
                 {vitals.weight_kg && <span className="text-slate-600 dark:text-slate-400">{vitals.weight_kg} kg</span>}
               </div>
             ))

@@ -29,4 +29,30 @@ describe('getVisibleNavItems', () => {
     const visible = getVisibleNavItems(ITEMS, () => true)
     expect(visible).toHaveLength(ITEMS.length)
   })
+
+  it('is unaffected by a role with no explicit allowlist entry (e.g. OTHER_STAFF, or omitting the role entirely)', () => {
+    const visible = getVisibleNavItems(ITEMS, () => true, 'OTHER_STAFF')
+    expect(visible).toHaveLength(ITEMS.length)
+  })
+
+  it("hides a permission-granted item that isn't in the caller's strict role allowlist", () => {
+    // NURSE holds every permission in this contrived fixture, but NURSE's
+    // real-world allowlist (app-shell.tsx) only ever includes '/' and
+    // '/opd' — neither /staff nor /billing exists in that allowlist, so
+    // both stay hidden despite the permission check passing.
+    const visible = getVisibleNavItems(ITEMS, () => true, 'NURSE')
+    expect(visible.map((i) => i.to)).toEqual(['/'])
+  })
+
+  it("never shows an item outside the role allowlist even without the permission check failing", () => {
+    const visible = getVisibleNavItems(ITEMS, (code) => code === 'billing.manage', 'DOCTOR')
+    // DOCTOR's allowlist has no /billing entry, so it stays hidden despite
+    // holding the permission that would otherwise show it.
+    expect(visible.map((i) => i.to)).not.toContain('/billing')
+  })
+
+  it('lets OWNER (no allowlist entry) see everything the permission check allows', () => {
+    const visible = getVisibleNavItems(ITEMS, () => true, 'OWNER')
+    expect(visible).toHaveLength(ITEMS.length)
+  })
 })

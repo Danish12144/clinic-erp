@@ -10,6 +10,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useEncounterVitals, useRecordVitals } from '@/features/vitals/hooks'
 import { getErrorMessage } from '@/lib/errors'
+import { celsiusToFahrenheit, fahrenheitToCelsius, FAHRENHEIT_MAX, FAHRENHEIT_MIN } from '@/lib/temperature'
 
 const numericField = z
   .string()
@@ -21,7 +22,11 @@ const vitalsFormSchema = z.object({
   systolic: numericField,
   diastolic: numericField,
   pulse: numericField,
-  temperature: numericField,
+  temperature: numericField
+    .refine(
+      (v) => !v || (Number(v) >= FAHRENHEIT_MIN && Number(v) <= FAHRENHEIT_MAX),
+      `Must be between ${FAHRENHEIT_MIN}°F and ${FAHRENHEIT_MAX}°F`,
+    ),
   weight: numericField,
 })
 
@@ -54,7 +59,7 @@ export function VitalsPanel({ encounterId }: { encounterId: string }) {
         systolic_bp: values.systolic ? Number(values.systolic) : undefined,
         diastolic_bp: values.diastolic ? Number(values.diastolic) : undefined,
         heart_rate: values.pulse ? Number(values.pulse) : undefined,
-        temperature_celsius: values.temperature ? Number(values.temperature) : undefined,
+        temperature_celsius: values.temperature ? fahrenheitToCelsius(Number(values.temperature)) : undefined,
         weight_kg: values.weight ? Number(values.weight) : undefined,
       })
       toast.success('Vitals recorded')
@@ -92,8 +97,10 @@ export function VitalsPanel({ encounterId }: { encounterId: string }) {
               <dd className="font-medium">{latest.heart_rate ?? '—'}</dd>
             </div>
             <div>
-              <dt className="text-muted-foreground">Temp (°C)</dt>
-              <dd className="font-medium">{latest.temperature_celsius ?? '—'}</dd>
+              <dt className="text-muted-foreground">Temp (°F)</dt>
+              <dd className="font-medium">
+                {latest.temperature_celsius != null ? `${celsiusToFahrenheit(latest.temperature_celsius)}°F` : '—'}
+              </dd>
             </div>
             <div>
               <dt className="text-muted-foreground">Weight (kg)</dt>
@@ -119,8 +126,8 @@ export function VitalsPanel({ encounterId }: { encounterId: string }) {
                 {errors.pulse && <p className="text-xs text-destructive">{errors.pulse.message}</p>}
               </div>
               <div className="flex flex-col gap-1.5">
-                <Label htmlFor="temperature">Temp (°C)</Label>
-                <Input id="temperature" inputMode="decimal" placeholder="37.0" {...register('temperature')} />
+                <Label htmlFor="temperature">Temp (°F)</Label>
+                <Input id="temperature" inputMode="decimal" placeholder="98.6" {...register('temperature')} />
                 {errors.temperature && <p className="text-xs text-destructive">{errors.temperature.message}</p>}
               </div>
               <div className="flex flex-col gap-1.5">

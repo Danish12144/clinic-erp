@@ -16,13 +16,38 @@ export interface NavItem {
   permission?: string | string[]
 }
 
+// Strict role-based nav allowlist, on top of (not instead of) the
+// permission-based filter below — a direct product-owner ask for tighter
+// nav filtering than the underlying permission grants alone would produce
+// (e.g. Nurse/Lab Staff/Pharmacy Staff all hold patients.view_demographics
+// for legitimate backend reasons, but only Receptionist/Doctor should see
+// a Patients link in nav). Paths not listed for a role are hidden from
+// that role's nav even if a held permission would otherwise show them —
+// real access is still governed by RequirePermission on the route itself
+// (backend-authoritative either way), this only affects what's offered as
+// a nav link. OWNER and any role not listed here (e.g. OTHER_STAFF, which
+// this mapping was never given an explicit spec for) fall through to
+// permission-only filtering, i.e. unrestricted by this layer.
+const ROLE_NAV_ALLOWLIST: Partial<Record<string, string[]>> = {
+  RECEPTIONIST: ['/', '/appointments', '/patients', '/opd', '/billing'],
+  DOCTOR: ['/', '/opd', '/patients'],
+  NURSE: ['/', '/opd'],
+  PHARMACY_STAFF: ['/', '/pharmacy', '/inventory'],
+  LAB_STAFF: ['/', '/lab'],
+}
+
 // Extracted so it's testable without rendering the whole shell (Sheet/
 // mobile-nav pulls in browser APIs jsdom doesn't implement by default) —
 // this is the exact logic that produced two real RBAC-in-UI bugs already
 // (the Owner-can't-see-doctor-directory gap, the OPD redirect fix), so
 // it's worth testing directly rather than only via full-component renders.
-export function getVisibleNavItems(items: NavItem[], hasPermission: (code: string) => boolean): NavItem[] {
-  return items.filter((item) => !item.permission || (Array.isArray(item.permission) ? item.permission : [item.permission]).some(hasPermission))
+export function getVisibleNavItems(items: NavItem[], hasPermission: (code: string) => boolean, roleCode?: string | null): NavItem[] {
+  const allowedPaths = roleCode ? ROLE_NAV_ALLOWLIST[roleCode] : undefined
+  return items.filter((item) => {
+    const permissionOk = !item.permission || (Array.isArray(item.permission) ? item.permission : [item.permission]).some(hasPermission)
+    if (!permissionOk) return false
+    return !allowedPaths || allowedPaths.includes(item.to)
+  })
 }
 
 const NAV_ITEMS: NavItem[] = [
@@ -113,8 +138,8 @@ function SidebarNav({ items, onNavigate }: { items: NavItem[]; onNavigate?: () =
 }
 
 export function AppShell() {
-  const { hasPermission } = useAuth()
-  const visibleItems = getVisibleNavItems(NAV_ITEMS, hasPermission)
+  const { hasPermission, user } = useAuth()
+  const visibleItems = getVisibleNavItems(NAV_ITEMS, hasPermission, user?.role_code)
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
 
   return (

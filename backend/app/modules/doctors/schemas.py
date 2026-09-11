@@ -11,6 +11,17 @@ from app.modules.tenancy.schemas import WorkingHours
 _PHONE_PATTERN = re.compile(r"^\+?[0-9][0-9 \-]{6,17}$")
 
 
+def _default_doctor_working_hours() -> WorkingHours:
+    """A newly invited doctor gets sensible regular OPD hours (Mon-Sat
+    09:00-18:00) instead of WorkingHours()'s own fail-closed empty default
+    — matching scripts/seed_demo_accounts.py's DOCTOR_WORKING_HOURS, so
+    every doctor (not just demo-seeded ones) is actually bookable out of
+    the box. A caller that supplies its own `working_hours` in the request
+    body still overrides this, unchanged."""
+    open_close = {"open": "09:00", "close": "18:00"}
+    return WorkingHours.model_validate({day: open_close for day in ("mon", "tue", "wed", "thu", "fri", "sat")})
+
+
 def _validate_phone(value: str | None) -> str | None:
     if value is None:
         return None
@@ -28,7 +39,7 @@ class DoctorCreateRequest(BaseModel):
     specialization: str | None = Field(None, max_length=200)
     registration_number: str | None = Field(None, max_length=100)
     consultation_fee: Decimal | None = Field(None, ge=0, max_digits=10, decimal_places=2)
-    working_hours: WorkingHours = Field(default_factory=WorkingHours)
+    working_hours: WorkingHours = Field(default_factory=_default_doctor_working_hours)
     bio: str | None = Field(None, max_length=2000)
     branch_ids: list[uuid.UUID] = Field(default_factory=list)
 

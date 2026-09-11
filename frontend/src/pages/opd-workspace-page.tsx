@@ -1,5 +1,5 @@
 import { zodResolver } from '@hookform/resolvers/zod'
-import { ArrowLeft, FileCheck, Loader2, Save } from 'lucide-react'
+import { ArrowLeft, FileCheck, Loader2, Printer, Save } from 'lucide-react'
 import { useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { toast } from 'sonner'
@@ -21,6 +21,7 @@ import {
   useCompleteConsultation,
   useConsultationByEncounter,
   useIssuePrescription,
+  usePrescriptionsByEncounter,
   useStartConsultation,
   useUpdateConsultation,
 } from '@/features/consultations/hooks'
@@ -231,6 +232,38 @@ function ConsultationPad({
   )
 }
 
+// The "this encounter is completed" landing view — a persistent alternative
+// to PrescriptionPreviewDialog (which can be unmounted by the very refetch
+// that put the encounter into this state before it's ever interacted
+// with, see usePrescriptionsByEncounter's own docstring). Looks the
+// prescription back up by encounter_id instead of depending on state
+// carried over from the finalize step.
+function CompletedEncounterView({ encounterId, status }: { encounterId: string; status: string }) {
+  const { data: prescriptions } = usePrescriptionsByEncounter(encounterId)
+  const [previewOpen, setPreviewOpen] = useState(false)
+  const latestPrescription = prescriptions?.items[0]
+
+  return (
+    <div className="flex flex-col items-center gap-3 p-12 text-center">
+      <p className="text-lg font-semibold">This encounter is {status.toLowerCase()}.</p>
+      {latestPrescription?.pdf_document_id && (
+        <Button className="gap-1.5" onClick={() => setPreviewOpen(true)}>
+          <Printer className="size-4" />
+          Print / Download Prescription PDF
+        </Button>
+      )}
+      <Link to="/opd" className="text-sm text-primary underline underline-offset-4">
+        Back to queue
+      </Link>
+      <PrescriptionPreviewDialog
+        documentId={latestPrescription?.pdf_document_id ?? null}
+        open={previewOpen}
+        onOpenChange={setPreviewOpen}
+      />
+    </div>
+  )
+}
+
 export function OpdWorkspacePage() {
   const { encounterId } = useParams<{ encounterId: string }>()
   const encounterQuery = useEncounter(encounterId)
@@ -261,14 +294,7 @@ export function OpdWorkspacePage() {
   const encounter = encounterQuery.data
 
   if (encounter.status === 'COMPLETED' || encounter.status === 'CANCELLED') {
-    return (
-      <div className="flex flex-col items-center gap-3 p-12 text-center">
-        <p className="text-lg font-semibold">This encounter is {encounter.status.toLowerCase()}.</p>
-        <Link to="/opd" className="text-sm text-primary underline underline-offset-4">
-          Back to queue
-        </Link>
-      </div>
-    )
+    return <CompletedEncounterView encounterId={encounterId} status={encounter.status} />
   }
 
   // consultationQuery.data is undefined while loading, null once loaded

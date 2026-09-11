@@ -9,6 +9,7 @@ from datetime import date, datetime, timedelta, timezone
 import pytest
 from httpx import AsyncClient
 
+from app.core.config import get_settings
 from app.modules.tenancy.models import Clinic
 
 pytestmark = pytest.mark.usefixtures("require_db")
@@ -252,7 +253,15 @@ async def test_dispensing_more_than_prescribed_is_rejected(api_client: AsyncClie
     assert response.status_code == 409
 
 
-async def test_dispensing_with_insufficient_stock_is_rejected(api_client: AsyncClient, owner_headers: dict[str, str], test_clinic: Clinic) -> None:
+async def test_dispensing_with_insufficient_stock_is_rejected(
+    api_client: AsyncClient, owner_headers: dict[str, str], test_clinic: Clinic, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Auto-replenish defaults ON (Settings.pharmacy_auto_replenish_stock — a
+    # pre-launch testing accommodation, see its own docstring in
+    # app/core/config.py); force it off here since this test's whole point
+    # is verifying the real "out of stock" rule still applies when a clinic
+    # turns that accommodation off.
+    monkeypatch.setattr(get_settings(), "pharmacy_auto_replenish_stock", False)
     medicine_id = await _create_medicine(api_client, owner_headers, name="LowStockDispense")
     await _receive_stock(api_client, owner_headers, medicine_id=medicine_id, batch_number="B1", expiry_date=(date.today() + timedelta(days=30)).isoformat(), quantity=2)
     item_id = await _prescribe_with_medicine(api_client, owner_headers, test_clinic, medicine_id=medicine_id, prescribed_quantity=10, doctor_phone="+919881100018", patient_phone="+919881100019")
@@ -378,7 +387,10 @@ async def test_discount_exceeding_total_is_rejected(api_client: AsyncClient, own
     assert response.status_code == 409
 
 
-async def test_checkout_with_insufficient_stock_is_rejected(api_client: AsyncClient, owner_headers: dict[str, str]) -> None:
+async def test_checkout_with_insufficient_stock_is_rejected(
+    api_client: AsyncClient, owner_headers: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(get_settings(), "pharmacy_auto_replenish_stock", False)
     await _enable_pharmacy_feature(api_client, owner_headers)
     medicine_id = await _create_medicine(api_client, owner_headers, name="OTC-LowStock")
     await _receive_stock(api_client, owner_headers, medicine_id=medicine_id, batch_number="B1", expiry_date=(date.today() + timedelta(days=30)).isoformat(), quantity=2)

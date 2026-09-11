@@ -11,6 +11,7 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy import update
 
+from app.core.config import get_settings
 from app.core.db import tenant_session
 from app.modules.patients.models import Patient
 from app.modules.tenancy.models import Clinic
@@ -135,7 +136,15 @@ async def test_booking_with_a_nonexistent_doctor_is_rejected(api_client: AsyncCl
     assert response.status_code == 422
 
 
-async def test_booking_outside_doctor_working_hours_conflicts(api_client: AsyncClient, owner_headers: dict[str, str], test_clinic: Clinic) -> None:
+async def test_booking_outside_doctor_working_hours_conflicts(
+    api_client: AsyncClient, owner_headers: dict[str, str], test_clinic: Clinic, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Working-hours enforcement defaults OFF (Settings.appointment_enforce_
+    # working_hours — a deliberate pre-launch testing accommodation, see its
+    # own docstring in app/core/config.py); force it on here since this
+    # test's whole point is verifying that rule still works when a clinic
+    # turns it back on.
+    monkeypatch.setattr(get_settings(), "appointment_enforce_working_hours", True)
     branch_id = await _create_branch(api_client, owner_headers, "ClosedBranch")
     # No working_hours configured at all -> every day is unavailable (fail closed).
     doctor_id = await _create_active_doctor(api_client, owner_headers, test_clinic, phone="+919876700008", working_hours={})
