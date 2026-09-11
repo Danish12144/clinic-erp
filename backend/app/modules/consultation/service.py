@@ -21,8 +21,10 @@ from fastapi import HTTPException, status
 from app.core.db import tenant_session
 from app.modules.audit.service import record as record_audit
 from app.modules.auth.repository import UserRepository
-from app.modules.checkin.models import EncounterStatus
-from app.modules.checkin.repository import EncounterRepository
+from app.modules.billing.schemas import AutoGenerateInvoiceRequest
+from app.modules.billing.service import BillingService
+from app.modules.checkin.models import EncounterStatus, QueueTokenStatus
+from app.modules.checkin.repository import EncounterRepository, QueueTokenRepository
 from app.modules.consultation.models import Prescription
 from app.modules.consultation.pdf import PrescriptionPdfItem, render_prescription_pdf
 from app.modules.consultation.repository import ConsultationRepository, PrescriptionRepository
@@ -95,6 +97,27 @@ class ConsultationService:
                 action="encounter.status_change", entity_type="encounter", entity_id=encounter.id,
                 before={"status": EncounterStatus.OPEN.value}, after={"status": EncounterStatus.IN_CONSULTATION.value},
             )
+
+            # Bypasses checkin/service.py's own _ALLOWED_QUEUE_TRANSITIONS
+            # validation deliberately -- that map exists to guard the
+            # receptionist-facing PATCH /queue/{id} endpoint (a human
+            # picking an arbitrary next state), not a system-driven
+            # transition this service already knows is correct because it
+            # just started the consultation itself. Same "direct repository
+            # call, no revalidation" precedent CheckInService.cancel_encounter
+            # already uses for its own SKIPPED transition. A token that was
+            # never CALLED (this app has no working front-desk "call next"
+            # UI yet -- see CLAUDE.md) still needs to reach IN_PROGRESS
+            # somehow, so this jumps straight there from whatever it was.
+            token = await QueueTokenRepository(session).get_by_encounter_id(encounter.id)
+            if token is not None and token.status not in (QueueTokenStatus.DONE, QueueTokenStatus.NO_SHOW, QueueTokenStatus.IN_PROGRESS):
+                before_token_status = token.status.value
+                await QueueTokenRepository(session).update_status(token.id, status=QueueTokenStatus.IN_PROGRESS)
+                await record_audit(
+                    session, tenant_id=tenant_id, actor_user_id=actor_user_id, actor_role=actor_role,
+                    action="queue_token.status_change", entity_type="queue_token", entity_id=token.id,
+                    before={"status": before_token_status}, after={"status": QueueTokenStatus.IN_PROGRESS.value},
+                )
             return summary
 
     async def update_consultation(
@@ -158,7 +181,39 @@ class ConsultationService:
                 action="encounter.status_change", entity_type="encounter", entity_id=encounter.id,
                 before={"status": EncounterStatus.IN_CONSULTATION.value}, after={"status": EncounterStatus.COMPLETED.value},
             )
-            return summary
+
+            # See start_consultation's own comment for why this bypasses
+            # checkin/service.py's transition validation directly — same
+            # reasoning, just the DONE end of the same state machine
+            # (PRD-ARCHITECTURE.md §5.1 step 6: "WAITING -> CALLED ->
+            # IN_PROGRESS -> DONE / NO_SHOW / SKIPPED").
+            token = await QueueTokenRepository(session).get_by_encounter_id(encounter.id)
+            if token is not None and token.status not in (QueueTokenStatus.DONE, QueueTokenStatus.NO_SHOW):
+                before_token_status = token.status.value
+                await QueueTokenRepository(session).update_status(token.id, status=QueueTokenStatus.DONE)
+                await record_audit(
+                    session, tenant_id=tenant_id, actor_user_id=actor_user_id, actor_role=actor_role,
+                    action="queue_token.status_change", entity_type="queue_token", entity_id=token.id,
+                    before={"status": before_token_status}, after={"status": QueueTokenStatus.DONE.value},
+                )
+
+        # Outside the transaction above, deliberately -- PRD-ARCHITECTURE.md
+        # §5.1 step 11 ("Billing generated... can be partially generated as
+        # the visit progresses... rather than only at the end") frames this
+        # as best-effort, not a hard requirement the clinical action itself
+        # should fail on. A doctor with no consultation_fee configured, or
+        # an invoice a receptionist already raised mid-visit, are both
+        # legitimate reasons auto_generate_invoice 422s/409s -- neither
+        # should block the consultation from completing, so this is a
+        # separate, independent transaction that's allowed to fail quietly.
+        try:
+            await BillingService().auto_generate_invoice(
+                tenant_id=tenant_id, payload=AutoGenerateInvoiceRequest(encounter_id=encounter.id),
+                actor_user_id=actor_user_id, actor_role=actor_role,
+            )
+        except HTTPException:
+            pass
+        return summary
 
     async def search_consultations(
         self, *, tenant_id: uuid.UUID, encounter_id: uuid.UUID | None, patient_id: uuid.UUID | None,

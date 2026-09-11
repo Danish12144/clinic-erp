@@ -121,6 +121,19 @@ class BillingService:
             if consultation is None:
                 raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "No consultation has been started for this encounter yet")
 
+            # Guards against a double-invoice for the same encounter — e.g.
+            # a receptionist manually auto-generating one mid-visit, then
+            # ConsultationService.complete_consultation trying again on
+            # completion (see that method's own docstring for why it calls
+            # this at all). A VOID invoice doesn't count as "already
+            # billed" — voiding is meant to let a fresh one be raised.
+            existing_invoices, _ = await InvoiceRepository(session).search(
+                tenant_id=tenant_id, branch_id=None, patient_id=None, encounter_id=encounter.id,
+                status=None, doctor_scope_user_id=None, limit=50, offset=0,
+            )
+            if any(inv.status != InvoiceStatus.VOID for inv in existing_invoices):
+                raise HTTPException(status.HTTP_409_CONFLICT, "An invoice already exists for this encounter")
+
             found = await DoctorRepository(session).get_user_and_profile(consultation.doctor_id)
             fee = found[1].consultation_fee if found else None
             if not fee or fee <= 0:
