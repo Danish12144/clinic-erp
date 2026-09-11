@@ -26,7 +26,7 @@ import { useCreatePatient } from '@/features/patients/hooks'
 import { getErrorMessage } from '@/lib/errors'
 import { PHONE_PATTERN } from '@/lib/validation'
 
-const patientFormSchema = z
+export const patientFormSchema = z
   .object({
     first_name: z.string().min(1, 'First name is required').max(100),
     last_name: z.string().max(100).optional().or(z.literal('')),
@@ -55,7 +55,7 @@ const patientFormSchema = z
     path: ['branchId'],
   })
 
-type PatientFormValues = z.infer<typeof patientFormSchema>
+export type PatientFormValues = z.infer<typeof patientFormSchema>
 
 const DEFAULT_VALUES: PatientFormValues = {
   first_name: '',
@@ -76,7 +76,7 @@ const DEFAULT_VALUES: PatientFormValues = {
 // Many walk-in patients don't know their exact date of birth — Age is a
 // convenience-only input that resolves to an approximate DOB (Jan 1 of the
 // birth year) on submit; the backend only ever accepts date_of_birth.
-function resolveDateOfBirth(values: PatientFormValues): string | undefined {
+export function resolveDateOfBirth(values: PatientFormValues): string | undefined {
   if (values.date_of_birth) return values.date_of_birth
   if (values.age) {
     const birthYear = new Date().getFullYear() - Number(values.age)
