@@ -11,10 +11,23 @@ import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { useBranches } from '@/features/branches/hooks'
 import { useAutoGenerateInvoice, useCreateInvoice } from '@/features/billing/hooks'
+import type { InvoiceLineSource } from '@/features/billing/types'
 import { searchEncounters } from '@/features/checkin/api'
 import { usePatientSearch } from '@/features/patients/hooks'
 import type { PatientSummary } from '@/features/patients/types'
 import { getErrorMessage } from '@/lib/errors'
+
+// A manually-created blank invoice needs its own source_type since it
+// isn't tied to one auto-generated source the way auto-generate's
+// CONSULTATION invoice is — this disambiguates it from any other
+// invoice already raised against the same encounter (1-to-N, see
+// backend/app/modules/billing/service.py's module docstring).
+const MANUAL_SOURCE_TYPES: { value: InvoiceLineSource; label: string }[] = [
+  { value: 'OTHER', label: 'General' },
+  { value: 'PROCEDURE', label: 'Procedure' },
+  { value: 'PHARMACY', label: 'Pharmacy' },
+  { value: 'LAB', label: 'Lab' },
+]
 
 export function NewInvoiceDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const navigate = useNavigate()
@@ -22,6 +35,7 @@ export function NewInvoiceDialog({ open, onOpenChange }: { open: boolean; onOpen
   const [selectedPatient, setSelectedPatient] = useState<PatientSummary | null>(null)
   const [branchId, setBranchId] = useState('')
   const [encounterId, setEncounterId] = useState<string | undefined>(undefined)
+  const [sourceType, setSourceType] = useState<InvoiceLineSource>('OTHER')
 
   const { data: searchResults, isFetching } = usePatientSearch(searchTerm)
   const { data: branches } = useBranches()
@@ -44,6 +58,7 @@ export function NewInvoiceDialog({ open, onOpenChange }: { open: boolean; onOpen
       setSelectedPatient(null)
       setBranchId('')
       setEncounterId(undefined)
+      setSourceType('OTHER')
     }
   }, [open])
 
@@ -54,7 +69,7 @@ export function NewInvoiceDialog({ open, onOpenChange }: { open: boolean; onOpen
     try {
       const invoice = encounterId
         ? await autoGenerate.mutateAsync({ encounter_id: encounterId })
-        : await createInvoice.mutateAsync({ branch_id: branchId, patient_id: selectedPatient.id })
+        : await createInvoice.mutateAsync({ branch_id: branchId, patient_id: selectedPatient.id, source_type: sourceType })
       toast.success('Invoice created')
       onOpenChange(false)
       navigate(`/billing/${invoice.id}`)
@@ -167,6 +182,24 @@ export function NewInvoiceDialog({ open, onOpenChange }: { open: boolean; onOpen
                 </p>
               )}
             </div>
+
+            {!encounterId && (
+              <div className="flex flex-col gap-1.5">
+                <Label>Invoice type</Label>
+                <Select value={sourceType} onValueChange={(value) => setSourceType((value ?? 'OTHER') as InvoiceLineSource)}>
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {MANUAL_SOURCE_TYPES.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
 
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>

@@ -55,6 +55,17 @@ class UserRepository:
         result = await self._session.execute(select(User).where(User.id == user_id))
         return result.scalar_one_or_none()
 
+    async def get_many_by_ids(self, user_ids: list[uuid.UUID]) -> list[User]:
+        """Batch variant of get_by_id — used where a caller needs to
+        resolve several ids to display names at once (e.g. Billing
+        labeling who recorded each payment) rather than looping get_by_id
+        per row. Returns nothing for an empty input rather than issuing a
+        pointless `WHERE id IN ()` query."""
+        if not user_ids:
+            return []
+        result = await self._session.execute(select(User).where(User.id.in_(set(user_ids))))
+        return list(result.scalars().all())
+
     async def touch_last_login(self, user_id: uuid.UUID) -> None:
         await self._session.execute(
             update(User).where(User.id == user_id).values(last_login_at=datetime.now(timezone.utc))

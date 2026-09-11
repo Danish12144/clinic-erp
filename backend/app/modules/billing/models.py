@@ -69,6 +69,12 @@ class Invoice(Base):
     branch_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("branches.id"), nullable=False)
     encounter_id: Mapped[uuid.UUID | None] = mapped_column(PGUUID(as_uuid=True), ForeignKey("encounters.id"), nullable=True)
     patient_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("patients.id"), nullable=False)
+    # Disambiguates multiple invoices against the same encounter (migration
+    # 0030) -- reuses InvoiceLineSource rather than a parallel enum. OTHER
+    # doubles as "general/ad-hoc, no single dominant source".
+    source_type: Mapped[InvoiceLineSource] = mapped_column(
+        invoice_line_source_enum, nullable=False, server_default=text("'OTHER'::invoice_line_source")
+    )
     subtotal: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False, server_default=text("0"))
     tax: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False, server_default=text("0"))
     discount: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False, server_default=text("0"))

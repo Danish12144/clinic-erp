@@ -19,6 +19,11 @@ class InvoiceCreateRequest(BaseModel):
     branch_id: uuid.UUID
     patient_id: uuid.UUID
     encounter_id: uuid.UUID | None = None
+    # Disambiguates this invoice from any other non-VOID invoice already
+    # raised for the same encounter (see auto_generate_invoice's own
+    # duplicate guard) — defaults to OTHER ("general/ad-hoc") for a
+    # manually built invoice that doesn't map to one clean source.
+    source_type: InvoiceLineSource = InvoiceLineSource.OTHER
     line_items: list[InvoiceLineItemCreateRequest] = Field(default_factory=list, max_length=100)
     tax: Decimal = Field(Decimal("0"), ge=0, max_digits=12, decimal_places=2)
     discount: Decimal = Field(Decimal("0"), ge=0, max_digits=12, decimal_places=2)
@@ -108,6 +113,11 @@ class PaymentSummary(BaseModel):
     gateway_reference: str | None
     notes: str | None
     recorded_by: uuid.UUID
+    # PRD's "received_by" concept — same column (Payment.recorded_by),
+    # resolved to a display name so the UI doesn't have to show a raw
+    # UUID. None only if the recording user's own record was hard-deleted
+    # (never happens today — users are soft-deactivated, not deleted).
+    recorded_by_name: str | None = None
     recorded_at: datetime
 
 
@@ -132,15 +142,29 @@ class InvoiceSummary(BaseModel):
     branch_id: uuid.UUID
     encounter_id: uuid.UUID | None
     patient_id: uuid.UUID
+    source_type: str
     subtotal: Decimal
     tax: Decimal
     discount: Decimal
     total: Decimal
     status: str
+    # A simplified 4-value projection of `status` (DRAFT/ISSUED both read
+    # as UNPAID) for callers that just want "is this paid, partially, or
+    # not at all" without the DRAFT/ISSUED distinction that only matters
+    # for whether line items are still editable. `status` remains the
+    # source of truth and the only field any transition logic reads.
+    payment_status: str
     voided_at: datetime | None
     voided_reason: str | None
+    # total_paid/balance_due are the original field names (kept for
+    # backward compatibility with every existing caller); paid_amount/
+    # outstanding_amount are the same two values under the PRD's own
+    # naming — both always identical, pick whichever reads better at the
+    # call site.
     total_paid: Decimal
     balance_due: Decimal
+    paid_amount: Decimal
+    outstanding_amount: Decimal
     created_at: datetime
     updated_at: datetime
     line_items: list[InvoiceLineItemSummary]

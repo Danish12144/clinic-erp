@@ -6,7 +6,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.modules.billing.models import Invoice, InvoiceLineItem, InvoiceStatus, Payment
+from app.modules.billing.models import Invoice, InvoiceLineItem, InvoiceLineSource, InvoiceStatus, Payment
 from app.modules.checkin.models import Encounter
 from app.modules.consultation.models import Consultation
 
@@ -28,9 +28,12 @@ class InvoiceRepository:
 
     async def create(
         self, *, tenant_id: uuid.UUID, branch_id: uuid.UUID, patient_id: uuid.UUID, encounter_id: uuid.UUID | None,
-        tax: Decimal, discount: Decimal,
+        tax: Decimal, discount: Decimal, source_type: InvoiceLineSource = InvoiceLineSource.OTHER,
     ) -> Invoice:
-        invoice = Invoice(tenant_id=tenant_id, branch_id=branch_id, patient_id=patient_id, encounter_id=encounter_id, tax=tax, discount=discount)
+        invoice = Invoice(
+            tenant_id=tenant_id, branch_id=branch_id, patient_id=patient_id, encounter_id=encounter_id,
+            tax=tax, discount=discount, source_type=source_type,
+        )
         self._session.add(invoice)
         await self._session.flush()
         return invoice

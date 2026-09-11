@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router-dom'
 import { NewInvoiceDialog } from '@/components/billing/new-invoice-dialog'
 import { EmptyState } from '@/components/shared/empty-state'
 import { StatusBadge } from '@/components/shared/status-badge'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -15,6 +16,14 @@ import { getPatient } from '@/features/patients/api'
 import type { PatientSummary } from '@/features/patients/types'
 
 const STATUS_OPTIONS = ['DRAFT', 'ISSUED', 'PARTIALLY_PAID', 'PAID', 'VOID'] as const
+
+const SOURCE_LABELS: Record<string, string> = {
+  CONSULTATION: 'Consultation',
+  PROCEDURE: 'Procedure',
+  PHARMACY: 'Pharmacy',
+  LAB: 'Lab',
+  OTHER: 'General',
+}
 
 function formatMoney(value: string): string {
   return `₹${Number(value).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
@@ -84,6 +93,7 @@ export function BillingPage() {
           <TableHeader>
             <TableRow>
               <TableHead>Patient</TableHead>
+              <TableHead>Type</TableHead>
               <TableHead>Total</TableHead>
               <TableHead>Balance due</TableHead>
               <TableHead>Status</TableHead>
@@ -94,7 +104,7 @@ export function BillingPage() {
             {isLoading &&
               Array.from({ length: 5 }).map((_, i) => (
                 <TableRow key={i}>
-                  {Array.from({ length: 5 }).map((__, j) => (
+                  {Array.from({ length: 6 }).map((__, j) => (
                     <TableCell key={j}>
                       <Skeleton className="h-4 w-full max-w-28" />
                     </TableCell>
@@ -104,7 +114,7 @@ export function BillingPage() {
 
             {!isLoading && invoices.length === 0 && (
               <TableRow className="hover:bg-transparent">
-                <TableCell colSpan={5}>
+                <TableCell colSpan={6}>
                   <EmptyState
                     icon={FileText}
                     title="No invoices found"
@@ -121,6 +131,9 @@ export function BillingPage() {
                   <TableRow key={invoice.id} className="cursor-pointer" onClick={() => navigate(`/billing/${invoice.id}`)}>
                     <TableCell className="font-medium text-slate-900 dark:text-slate-100">
                       {patient ? [patient.first_name, patient.last_name].filter(Boolean).join(' ') : <Skeleton className="h-4 w-24" />}
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="secondary">{SOURCE_LABELS[invoice.source_type] ?? invoice.source_type}</Badge>
                     </TableCell>
                     <TableCell className="text-slate-700 dark:text-slate-300">{formatMoney(invoice.total)}</TableCell>
                     <TableCell className="font-medium text-slate-900 dark:text-slate-100">{formatMoney(invoice.balance_due)}</TableCell>

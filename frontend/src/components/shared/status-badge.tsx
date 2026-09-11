@@ -26,6 +26,13 @@ const STATUS_STYLES: Record<string, string> = {
   PARTIALLY_PAID: 'bg-blue-50 text-blue-700 ring-blue-600/20 dark:bg-blue-500/10 dark:text-blue-400 dark:ring-blue-500/20',
   PAID: 'bg-emerald-50 text-emerald-700 ring-emerald-600/20 dark:bg-emerald-500/10 dark:text-emerald-400 dark:ring-emerald-500/20',
   VOID: 'bg-rose-50 text-rose-700 ring-rose-600/20 dark:bg-rose-500/10 dark:text-rose-400 dark:ring-rose-500/20',
+  // Invoice.payment_status (a simplified UNPAID/PARTIAL/PAID/VOID
+  // projection of the status above) — PARTIAL/PAID/VOID reuse the exact
+  // colors of their PARTIALLY_PAID/PAID/VOID counterparts so the same
+  // concept always reads the same color regardless of which field it
+  // came from.
+  UNPAID: 'bg-amber-50 text-amber-700 ring-amber-600/20 dark:bg-amber-500/10 dark:text-amber-400 dark:ring-amber-500/20',
+  PARTIAL: 'bg-blue-50 text-blue-700 ring-blue-600/20 dark:bg-blue-500/10 dark:text-blue-400 dark:ring-blue-500/20',
   // Lab order statuses (backend/app/modules/lab/models.py::LabOrderStatus)
   // — COMPLETED/CANCELLED already defined above, reused as-is.
   ORDERED: 'bg-amber-50 text-amber-700 ring-amber-600/20 dark:bg-amber-500/10 dark:text-amber-400 dark:ring-amber-500/20',
@@ -68,6 +75,8 @@ const STATUS_LABELS: Record<string, string> = {
   PARTIALLY_PAID: 'Partially paid',
   PAID: 'Paid',
   VOID: 'Void',
+  UNPAID: 'Unpaid',
+  PARTIAL: 'Partial',
   ORDERED: 'Ordered',
   SAMPLE_COLLECTED: 'Sample collected',
   RESULTED: 'Resulted',

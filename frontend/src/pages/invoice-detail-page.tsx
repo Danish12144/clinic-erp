@@ -70,7 +70,9 @@ export function InvoiceDetailPage() {
           <p className="text-sm text-slate-500 dark:text-slate-400">{patient ? `MRN ${patient.mrn}` : ''}</p>
         </div>
         <div className="flex items-center gap-2">
+          <Badge variant="secondary">{SOURCE_LABELS[invoice.source_type] ?? invoice.source_type}</Badge>
           <StatusBadge status={invoice.status} />
+          {!isDraft && !isVoid && <StatusBadge status={invoice.payment_status} />}
           {canManage && isDraft && (
             <Button
               size="sm"
@@ -231,6 +233,7 @@ export function InvoiceDetailPage() {
                         </span>
                         <span className="text-xs text-slate-500 dark:text-slate-400">
                           {payment.method} · {new Date(payment.recorded_at).toLocaleString()}
+                          {payment.recorded_by_name && <> · Received by {payment.recorded_by_name}</>}
                         </span>
                       </div>
                       {isRefund && <Badge variant="outline">Refund</Badge>}

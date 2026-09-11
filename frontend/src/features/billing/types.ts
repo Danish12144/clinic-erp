@@ -25,8 +25,17 @@ export interface PaymentSummary {
   gateway_reference: string | null
   notes: string | null
   recorded_by: string
+  // PRD's "received_by" — same column, resolved server-side to a display
+  // name so the UI never has to show a raw user id.
+  recorded_by_name: string | null
   recorded_at: string
 }
+
+// UNPAID | PARTIAL | PAID | VOID — a simplified projection of `status`
+// (DRAFT and ISSUED both read UNPAID; the DRAFT/ISSUED distinction only
+// matters for whether line items are still editable, not for payment
+// state). Prefer this over deriving payment state from `status` yourself.
+export type InvoicePaymentStatus = 'UNPAID' | 'PARTIAL' | 'PAID' | 'VOID'
 
 export interface InvoiceSummary {
   id: string
@@ -34,15 +43,24 @@ export interface InvoiceSummary {
   branch_id: string
   encounter_id: string | null
   patient_id: string
+  // Disambiguates this invoice from any other non-VOID invoice for the
+  // same encounter — Encounter:Invoice is 1-to-N, not 1-to-1.
+  source_type: InvoiceLineSource
   subtotal: string
   tax: string
   discount: string
   total: string
   status: string
+  payment_status: InvoicePaymentStatus
   voided_at: string | null
   voided_reason: string | null
+  // total_paid/balance_due and paid_amount/outstanding_amount are always
+  // identical — two names for the same two values (backend/app/modules/
+  // billing/schemas.py::InvoiceSummary).
   total_paid: string
   balance_due: string
+  paid_amount: string
+  outstanding_amount: string
   created_at: string
   updated_at: string
   line_items: InvoiceLineItemSummary[]
@@ -84,6 +102,7 @@ export interface InvoiceCreateRequest {
   branch_id: string
   patient_id: string
   encounter_id?: string | null
+  source_type?: InvoiceLineSource
   line_items?: InvoiceLineItemCreateRequest[]
   tax?: string
   discount?: string

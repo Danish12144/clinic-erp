@@ -14,6 +14,13 @@ Doctor "R (own)" and Patient "O (own)" explicitly): Doctor sees only
 invoices for encounters whose Consultation they own; Patient sees only
 their own `patient_id`. Owner/Receptionist (`billing.manage`) are
 tenant-wide, unscoped.
+
+Encounter:Invoice is 1-to-N, disambiguated by `Invoice.source_type`
+(migration 0030) — an encounter can carry a CONSULTATION invoice and a
+separate PHARMACY/LAB/OTHER invoice at once. `auto_generate_invoice`'s own
+duplicate guard only blocks a second non-VOID invoice of the *same*
+source_type; it never blocks a different one. This replaces the previous
+one-encounter-one-invoice assumption the PRD's own ER diagram used to show.
 """
 
 import uuid
@@ -24,7 +31,8 @@ from fastapi import HTTPException, status
 
 from app.core.db import tenant_session
 from app.modules.audit.service import record as record_audit
-from app.modules.billing.models import Invoice, InvoiceStatus, PaymentMethod
+from app.modules.auth.repository import UserRepository
+from app.modules.billing.models import Invoice, InvoiceLineSource, InvoiceStatus, Payment, PaymentMethod
 from app.modules.billing.payment_gateway import get_payment_gateway_adapter
 from app.modules.billing.repository import InvoiceRepository, PaymentRepository
 from app.modules.billing.schemas import (
@@ -52,17 +60,48 @@ from app.modules.tenancy.repository import BranchRepository
 
 _REVERSAL_NOTE = "Automatic reversal for invoice void"
 
+# DRAFT/ISSUED both mean "nothing collected yet" from a pure payment-status
+# point of view — the DRAFT/ISSUED distinction itself only matters for
+# whether line items are still editable (see this module's own docstring),
+# not for how much has been paid. VOID stays VOID; it's a cancellation, not
+# a payment state.
+_PAYMENT_STATUS_BY_INVOICE_STATUS: dict[InvoiceStatus, str] = {
+    InvoiceStatus.DRAFT: "UNPAID",
+    InvoiceStatus.ISSUED: "UNPAID",
+    InvoiceStatus.PARTIALLY_PAID: "PARTIAL",
+    InvoiceStatus.PAID: "PAID",
+    InvoiceStatus.VOID: "VOID",
+}
 
-def _to_summary(invoice: Invoice) -> InvoiceSummary:
+
+async def _names_for_payments(session, payments: list[Payment]) -> dict[uuid.UUID, str]:
+    """Batch-resolves Payment.recorded_by -> a display name for the whole
+    page/invoice at once, rather than one lookup per payment."""
+    user_ids = {p.recorded_by for p in payments}
+    users = await UserRepository(session).get_many_by_ids(list(user_ids))
+    return {u.id: (" ".join(filter(None, [u.first_name, u.last_name])) or u.email or u.phone or str(u.id)) for u in users}
+
+
+def _payment_summary(payment: Payment, names: dict[uuid.UUID, str]) -> PaymentSummary:
+    summary = PaymentSummary.model_validate(payment)
+    summary.recorded_by_name = names.get(payment.recorded_by)
+    return summary
+
+
+def _to_summary(invoice: Invoice, names: dict[uuid.UUID, str] | None = None) -> InvoiceSummary:
+    names = names or {}
     total_paid = sum((p.amount for p in invoice.payments), Decimal("0.00"))
+    balance_due = Decimal(invoice.total) - total_paid
     return InvoiceSummary(
         id=invoice.id, tenant_id=invoice.tenant_id, branch_id=invoice.branch_id, encounter_id=invoice.encounter_id,
-        patient_id=invoice.patient_id, subtotal=invoice.subtotal, tax=invoice.tax, discount=invoice.discount,
-        total=invoice.total, status=invoice.status.value, voided_at=invoice.voided_at, voided_reason=invoice.voided_reason,
-        total_paid=total_paid, balance_due=Decimal(invoice.total) - total_paid,
+        patient_id=invoice.patient_id, source_type=invoice.source_type.value, subtotal=invoice.subtotal, tax=invoice.tax,
+        discount=invoice.discount, total=invoice.total, status=invoice.status.value,
+        payment_status=_PAYMENT_STATUS_BY_INVOICE_STATUS[invoice.status],
+        voided_at=invoice.voided_at, voided_reason=invoice.voided_reason,
+        total_paid=total_paid, balance_due=balance_due, paid_amount=total_paid, outstanding_amount=balance_due,
         created_at=invoice.created_at, updated_at=invoice.updated_at,
         line_items=[InvoiceLineItemSummary.model_validate(i) for i in invoice.line_items],
-        payments=[PaymentSummary.model_validate(p) for p in invoice.payments],
+        payments=[_payment_summary(p, names) for p in invoice.payments],
     )
 
 
@@ -94,7 +133,7 @@ class BillingService:
             repo = InvoiceRepository(session)
             invoice = await repo.create(
                 tenant_id=tenant_id, branch_id=payload.branch_id, patient_id=payload.patient_id,
-                encounter_id=payload.encounter_id, tax=payload.tax, discount=payload.discount,
+                encounter_id=payload.encounter_id, tax=payload.tax, discount=payload.discount, source_type=payload.source_type,
             )
             for item in payload.line_items:
                 await repo.add_line_item(
@@ -104,7 +143,8 @@ class BillingService:
             await self._recompute_totals(session, invoice.id)
             full = await repo.get_by_id(invoice.id)
             assert full is not None
-            summary = _to_summary(full)
+            names = await _names_for_payments(session, full.payments)
+            summary = _to_summary(full, names)
             await record_audit(
                 session, tenant_id=tenant_id, actor_user_id=actor_user_id, actor_role=actor_role,
                 action="invoice.create", entity_type="invoice", entity_id=invoice.id, before=None, after=summary.model_dump(mode="json"),
@@ -121,18 +161,26 @@ class BillingService:
             if consultation is None:
                 raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "No consultation has been started for this encounter yet")
 
-            # Guards against a double-invoice for the same encounter — e.g.
-            # a receptionist manually auto-generating one mid-visit, then
-            # ConsultationService.complete_consultation trying again on
-            # completion (see that method's own docstring for why it calls
-            # this at all). A VOID invoice doesn't count as "already
-            # billed" — voiding is meant to let a fresh one be raised.
+            # Guards against a double CONSULTATION invoice for the same
+            # encounter — e.g. a receptionist manually auto-generating one
+            # mid-visit, then ConsultationService.complete_consultation
+            # trying again on completion (see that method's own docstring
+            # for why it calls this at all). There's at most one
+            # Consultation per Encounter ever (the state machine won't
+            # allow a second), so unlike other source_types, ANY non-VOID
+            # CONSULTATION invoice already covers this encounter's one
+            # consultation fee. Scoped to source_type=CONSULTATION only —
+            # this must NOT block a different-source_type invoice (e.g. a
+            # PHARMACY invoice) for the same encounter; Encounter:Invoice
+            # is 1-to-N, disambiguated by source_type, not 1-to-1. A VOID
+            # invoice doesn't count as "already billed" — voiding is meant
+            # to let a fresh one be raised.
             existing_invoices, _ = await InvoiceRepository(session).search(
                 tenant_id=tenant_id, branch_id=None, patient_id=None, encounter_id=encounter.id,
                 status=None, doctor_scope_user_id=None, limit=50, offset=0,
             )
-            if any(inv.status != InvoiceStatus.VOID for inv in existing_invoices):
-                raise HTTPException(status.HTTP_409_CONFLICT, "An invoice already exists for this encounter")
+            if any(inv.status != InvoiceStatus.VOID and inv.source_type == InvoiceLineSource.CONSULTATION for inv in existing_invoices):
+                raise HTTPException(status.HTTP_409_CONFLICT, "A consultation invoice already exists for this encounter")
 
             found = await DoctorRepository(session).get_user_and_profile(consultation.doctor_id)
             fee = found[1].consultation_fee if found else None
@@ -142,7 +190,7 @@ class BillingService:
             repo = InvoiceRepository(session)
             invoice = await repo.create(
                 tenant_id=tenant_id, branch_id=encounter.branch_id, patient_id=encounter.patient_id,
-                encounter_id=encounter.id, tax=Decimal("0"), discount=Decimal("0"),
+                encounter_id=encounter.id, tax=Decimal("0"), discount=Decimal("0"), source_type=InvoiceLineSource.CONSULTATION,
             )
             await repo.add_line_item(
                 tenant_id=tenant_id, invoice_id=invoice.id, source_type="CONSULTATION", source_id=consultation.id,
@@ -151,7 +199,8 @@ class BillingService:
             await self._recompute_totals(session, invoice.id)
             full = await repo.get_by_id(invoice.id)
             assert full is not None
-            summary = _to_summary(full)
+            names = await _names_for_payments(session, full.payments)
+            summary = _to_summary(full, names)
             await record_audit(
                 session, tenant_id=tenant_id, actor_user_id=actor_user_id, actor_role=actor_role,
                 action="invoice.auto_generate", entity_type="invoice", entity_id=invoice.id, before=None, after=summary.model_dump(mode="json"),
@@ -174,7 +223,8 @@ class BillingService:
             await self._recompute_totals(session, invoice.id)
             full = await repo.get_by_id(invoice.id)
             assert full is not None
-            summary = _to_summary(full)
+            names = await _names_for_payments(session, full.payments)
+            summary = _to_summary(full, names)
             await record_audit(
                 session, tenant_id=tenant_id, actor_user_id=actor_user_id, actor_role=actor_role,
                 action="invoice.line_item_add", entity_type="invoice", entity_id=invoice.id, before=None, after=summary.model_dump(mode="json"),
@@ -202,7 +252,8 @@ class BillingService:
             await self._recompute_totals(session, invoice.id)
             full = await repo.get_by_id(invoice.id)
             assert full is not None
-            summary = _to_summary(full)
+            names = await _names_for_payments(session, full.payments)
+            summary = _to_summary(full, names)
             await record_audit(
                 session, tenant_id=tenant_id, actor_user_id=actor_user_id, actor_role=actor_role,
                 action="invoice.line_item_update", entity_type="invoice", entity_id=invoice.id, before=None, after=summary.model_dump(mode="json"),
@@ -226,7 +277,8 @@ class BillingService:
             await self._recompute_totals(session, invoice.id)
             full = await repo.get_by_id(invoice.id)
             assert full is not None
-            summary = _to_summary(full)
+            names = await _names_for_payments(session, full.payments)
+            summary = _to_summary(full, names)
             await record_audit(
                 session, tenant_id=tenant_id, actor_user_id=actor_user_id, actor_role=actor_role,
                 action="invoice.line_item_remove", entity_type="invoice", entity_id=invoice.id, before=None, after=summary.model_dump(mode="json"),
@@ -247,7 +299,8 @@ class BillingService:
             await self._recompute_totals(session, invoice.id)
             full = await repo.get_by_id(invoice.id)
             assert full is not None
-            summary = _to_summary(full)
+            names = await _names_for_payments(session, full.payments)
+            summary = _to_summary(full, names)
             await record_audit(
                 session, tenant_id=tenant_id, actor_user_id=actor_user_id, actor_role=actor_role,
                 action="invoice.update", entity_type="invoice", entity_id=invoice.id, before=None, after=summary.model_dump(mode="json"),
@@ -268,7 +321,8 @@ class BillingService:
             await repo.update_fields(invoice.id, status=InvoiceStatus.ISSUED)
             full = await repo.get_by_id(invoice.id)
             assert full is not None
-            summary = _to_summary(full)
+            names = await _names_for_payments(session, full.payments)
+            summary = _to_summary(full, names)
             await record_audit(
                 session, tenant_id=tenant_id, actor_user_id=actor_user_id, actor_role=actor_role,
                 action="invoice.issue", entity_type="invoice", entity_id=invoice.id,
@@ -302,7 +356,8 @@ class BillingService:
             )
             full = await invoice_repo.get_by_id(invoice.id)
             assert full is not None
-            summary = _to_summary(full)
+            names = await _names_for_payments(session, full.payments)
+            summary = _to_summary(full, names)
             await record_audit(
                 session, tenant_id=tenant_id, actor_user_id=actor_user_id, actor_role=actor_role,
                 action="invoice.void", entity_type="invoice", entity_id=invoice.id,
@@ -327,7 +382,8 @@ class BillingService:
                 tenant_id=tenant_id, branch_id=branch_id, patient_id=effective_patient_id, encounter_id=encounter_id,
                 status=status_filter, doctor_scope_user_id=doctor_scope, limit=limit, offset=offset,
             )
-            return InvoiceListResponse(items=[_to_summary(i) for i in rows], total=total, limit=limit, offset=offset)
+            names = await _names_for_payments(session, [p for row in rows for p in row.payments])
+            return InvoiceListResponse(items=[_to_summary(i, names) for i in rows], total=total, limit=limit, offset=offset)
 
     async def get_my_invoices(self, *, tenant_id: uuid.UUID, user_id: uuid.UUID, limit: int, offset: int) -> InvoiceListResponse:
         async with tenant_session(tenant_id) as session:
@@ -338,7 +394,8 @@ class BillingService:
                 tenant_id=tenant_id, branch_id=None, patient_id=patient.id, encounter_id=None,
                 status=None, doctor_scope_user_id=None, limit=limit, offset=offset,
             )
-            return InvoiceListResponse(items=[_to_summary(i) for i in rows], total=total, limit=limit, offset=offset)
+            names = await _names_for_payments(session, [p for row in rows for p in row.payments])
+            return InvoiceListResponse(items=[_to_summary(i, names) for i in rows], total=total, limit=limit, offset=offset)
 
     async def get_invoice(self, *, tenant_id: uuid.UUID, invoice_id: uuid.UUID, actor_role: str, actor_user_id: uuid.UUID) -> InvoiceSummary:
         async with tenant_session(tenant_id) as session:
@@ -351,7 +408,8 @@ class BillingService:
                 own_patient = await PatientRepository(session).get_by_user_id(actor_user_id)
                 if own_patient is None or invoice.patient_id != own_patient.id:
                     raise HTTPException(status.HTTP_404_NOT_FOUND, "Invoice not found")
-            return _to_summary(invoice)
+            names = await _names_for_payments(session, invoice.payments)
+            return _to_summary(invoice, names)
 
 
 class PaymentService:
@@ -385,7 +443,8 @@ class PaymentService:
             if new_status != before_status:
                 await invoice_repo.update_fields(invoice.id, status=new_status)
 
-            summary = PaymentSummary.model_validate(payment)
+            names = await _names_for_payments(session, [payment])
+            summary = _payment_summary(payment, names)
             action = "payment.refund" if payload.amount < 0 else "payment.record"
             await record_audit(
                 session, tenant_id=tenant_id, actor_user_id=actor_user_id, actor_role=actor_role,
@@ -409,7 +468,8 @@ class PaymentService:
     async def search_payments(self, *, tenant_id: uuid.UUID, invoice_id: uuid.UUID | None, limit: int, offset: int) -> PaymentListResponse:
         async with tenant_session(tenant_id) as session:
             rows, total = await PaymentRepository(session).search(tenant_id=tenant_id, invoice_id=invoice_id, limit=limit, offset=offset)
-            return PaymentListResponse(items=[PaymentSummary.model_validate(p) for p in rows], total=total, limit=limit, offset=offset)
+            names = await _names_for_payments(session, rows)
+            return PaymentListResponse(items=[_payment_summary(p, names) for p in rows], total=total, limit=limit, offset=offset)
 
     async def create_payment_order(self, *, tenant_id: uuid.UUID, invoice_id: uuid.UUID, actor_user_id: uuid.UUID, actor_role: str) -> PaymentOrderResponse:
         """The "hand the frontend something to redirect/open a checkout

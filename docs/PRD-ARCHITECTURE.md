@@ -165,8 +165,8 @@ Grouped for architectural clarity (this grouping maps closely to backend module 
 8. **Consultation** — Doctor opens the `Encounter`, sees vitals history, prior encounters (EMR), allergies, chronic conditions. Consultation start/end timestamps recorded on the `Encounter`.
 9. **Diagnosis / clinical notes** — Doctor records chief complaint, clinical notes, diagnosis (free text + optional ICD-10 code) on the `Consultation` record linked 1:1 to the `Encounter`.
 10. **E-prescription** — Doctor creates a `Prescription` (1:1 or 1:many with `Encounter`, see §30 on refills/follow-up prescriptions) containing `PrescriptionItem` rows (medicine, dosage, frequency, duration, instructions). Prescription is immutable once issued (see §5.4) — corrections are new prescriptions referencing the original, not edits.
-11. **Billing generated** — An `Invoice` is created/updated for the `Encounter`, aggregating billable `InvoiceLineItem`s from consultation fee, procedures, pharmacy dispense (if done at point of care), and lab orders. Billing can be partially generated as the visit progresses (e.g., consultation fee billed at check-in, pharmacy items added after dispensing) rather than only at the end.
-12. **Payment recorded** — One or more `Payment` rows against the `Invoice` (supports split/partial payment, multiple methods). `Invoice.status` derives from the sum of payments (`UNPAID / PARTIALLY_PAID / PAID`), it is never set directly.
+11. **Billing generated** — An `Encounter` can carry **multiple** `Invoice` rows, disambiguated by `Invoice.source_type` (`CONSULTATION` / `PROCEDURE` / `PHARMACY` / `LAB` / `OTHER`) — e.g. a `CONSULTATION` invoice raised at check-in and a separate `PHARMACY` invoice raised after dispensing, rather than one invoice everything must accrete onto. Only one non-VOID invoice per `source_type` is allowed per encounter (re-raising a consultation invoice for an encounter that already has one is rejected) — a different `source_type` is never blocked by an existing one. Each `Invoice` still aggregates its own `InvoiceLineItem`s the same way (consultation fee, procedures, pharmacy dispense, lab orders), just scoped to its own `source_type`.
+12. **Payment recorded** — One or more `Payment` rows against an `Invoice` (supports split/partial payment, multiple methods). `Payment.recorded_by` is the "received by" staff member — always populated, surfaced to the UI as a resolved display name, not a raw id. `Invoice.status` derives from the sum of payments (`DRAFT → ISSUED → PARTIALLY_PAID → PAID`, see §17); a simplified `payment_status` (`UNPAID / PARTIAL / PAID / VOID`) is also exposed for callers that don't need the DRAFT/ISSUED distinction. It is never set directly.
 13. **Patient portal access** — Patient (authenticated via phone OTP) views their own appointments, encounters (read-only clinical summary, not raw internal notes unless the clinic opts to expose them), prescriptions, lab reports, and invoices — all scoped strictly to `patient_id = self`.
 
 ### 5.2 Clinic & staff onboarding (not in the original 13 steps, but required by §2/§4)
@@ -240,9 +240,9 @@ Grouped by domain. Every table below implicitly includes `id (UUID)`, `tenant_id
 - `LabResult` — lab_order_id, parameter, value, unit, reference_range, flag (NORMAL/LOW/HIGH/CRITICAL), entered_by, finalized_at.
 
 **Financial**
-- `Invoice` — encounter_id (nullable for non-encounter charges), patient_id, subtotal, tax, discount, total, status (derived), voided_at/reason.
+- `Invoice` — encounter_id (nullable for non-encounter charges; **1-to-N, not 1-to-1** — an encounter may carry several invoices), source_type (CONSULTATION/PROCEDURE/PHARMACY/LAB/OTHER — disambiguates which invoice this is when an encounter has more than one; at most one non-VOID invoice per source_type per encounter), patient_id, subtotal, tax, discount, total, status (derived), voided_at/reason.
 - `InvoiceLineItem` — invoice_id, source_type (CONSULTATION/PROCEDURE/PHARMACY/LAB), source_id, description, quantity, unit_price, total.
-- `Payment` — invoice_id, amount, method (CASH/CARD/UPI/INSURANCE), gateway_reference (nullable), recorded_by, recorded_at.
+- `Payment` — invoice_id, amount, method (CASH/CARD/UPI/INSURANCE), gateway_reference (nullable), recorded_by ("received by" — the staff member who collected it), recorded_at.
 - `Expense` — branch_id, category, amount, vendor, incurred_at, recorded_by, receipt_document_id.
 
 **Inventory (non-pharmacy)**
@@ -300,7 +300,7 @@ erDiagram
     Encounter ||--o{ LabOrder : requests
     LabOrder ||--o{ LabResult : produces
 
-    Encounter ||--o| Invoice : bills
+    Encounter ||--o{ Invoice : bills
     Invoice ||--o{ InvoiceLineItem : composed_of
     Invoice ||--o{ Payment : settled_by
 
@@ -552,6 +552,8 @@ PaymentGatewayAdapter (interface)
 - Supports **split/partial payments** against one invoice (multiple `Payment` rows), and **partial refunds** (a `Payment` with negative amount + reason, never mutating/deleting the original).
 - Reconciliation: a scheduled job reconciles gateway-reported transactions against recorded `Payment` rows for gateway payments, flagging mismatches for Owner review — not built in v1, but the `gateway_reference` field exists from the start so it can be added without a schema change.
 - Insurance/co-pay tracked as a `Payment.method=INSURANCE` with supporting fields for claim reference — full insurance-claim workflow (submission, adjudication) is out of scope for v1 and is a distinct future module, not silently assumed.
+- `Payment.recorded_by` **is** the "received by" field — the staff member who collected the money, exposed to the UI as a resolved display name (`recorded_by_name`) rather than a raw user id. There is no separate "received by" concept beyond this.
+- **A real online-gateway prepayment is not yet auto-registered as a `Payment`.** `create_payment_order` (the "hand the frontend something to pay against" half of §17) deliberately does not create a `Payment` row — recording that money was actually received still only happens through the same `record_payment` path a manual cash/card/UPI collection uses. A genuine online prepayment reaching `PARTIAL`/`PAID` status automatically requires a real gateway webhook confirming the transaction and calling `record_payment` itself; until a real `PaymentGatewayAdapter` (not `MockPaymentGatewayAdapter`) and a webhook endpoint exist, this is a manual step, not a gap in the ledger model itself — the ledger already correctly reflects whatever `Payment` rows exist regardless of how they were collected.
 
 ---
 

@@ -86,10 +86,14 @@ async def test_receptionist_can_create_a_draft_invoice_with_line_items(api_clien
     assert response.status_code == 201
     body = response.json()
     assert body["status"] == "DRAFT"
+    assert body["source_type"] == "OTHER"
+    assert body["payment_status"] == "UNPAID"
     assert body["subtotal"] == "300.00"
     assert body["total"] == "300.00"
     assert body["total_paid"] == "0.00"
     assert body["balance_due"] == "300.00"
+    assert body["paid_amount"] == "0.00"
+    assert body["outstanding_amount"] == "300.00"
 
 
 async def test_doctor_cannot_create_an_invoice(api_client: AsyncClient, login_as) -> None:
@@ -152,6 +156,53 @@ async def test_auto_generate_without_a_configured_fee_is_rejected(api_client: As
 
     response = await api_client.post("/api/v1/billing/invoices/auto-generate", json={"encounter_id": encounter_id}, headers=owner_headers)
     assert response.status_code == 422
+
+
+async def test_auto_generate_twice_for_the_same_encounter_is_rejected(api_client: AsyncClient, owner_headers: dict[str, str], test_clinic: Clinic) -> None:
+    """The duplicate-CONSULTATION-invoice guard — re-completing/retrying
+    must not double-bill the one consultation an encounter can ever have."""
+    branch_id = await _create_branch(api_client, owner_headers, "AutoGenTwiceBranch")
+    doctor_id, doctor_headers = await _create_active_doctor(api_client, owner_headers, test_clinic, phone="+919878000021", fee=500)
+    patient_id = await _create_patient(api_client, owner_headers, phone="+919878000022")
+    encounter_id = await _register_walk_in(api_client, owner_headers, patient_id=patient_id, branch_id=branch_id, doctor_id=doctor_id)
+    await _start_consultation(api_client, doctor_headers, encounter_id=encounter_id)
+
+    first = await api_client.post("/api/v1/billing/invoices/auto-generate", json={"encounter_id": encounter_id}, headers=owner_headers)
+    assert first.status_code == 201
+    assert first.json()["source_type"] == "CONSULTATION"
+
+    second = await api_client.post("/api/v1/billing/invoices/auto-generate", json={"encounter_id": encounter_id}, headers=owner_headers)
+    assert second.status_code == 409
+
+
+async def test_a_different_source_type_invoice_is_not_blocked_by_an_existing_consultation_invoice(
+    api_client: AsyncClient, owner_headers: dict[str, str], test_clinic: Clinic
+) -> None:
+    """Encounter:Invoice is 1-to-N — a PHARMACY (or any other source_type)
+    invoice against an encounter that already has a CONSULTATION invoice
+    must succeed, not 409 like the same-source_type case above."""
+    branch_id = await _create_branch(api_client, owner_headers, "MultiInvoiceBranch")
+    doctor_id, doctor_headers = await _create_active_doctor(api_client, owner_headers, test_clinic, phone="+919878000023", fee=500)
+    patient_id = await _create_patient(api_client, owner_headers, phone="+919878000024")
+    encounter_id = await _register_walk_in(api_client, owner_headers, patient_id=patient_id, branch_id=branch_id, doctor_id=doctor_id)
+    await _start_consultation(api_client, doctor_headers, encounter_id=encounter_id)
+
+    consult_invoice = await api_client.post("/api/v1/billing/invoices/auto-generate", json={"encounter_id": encounter_id}, headers=owner_headers)
+    assert consult_invoice.status_code == 201
+
+    pharmacy_invoice = await api_client.post(
+        "/api/v1/billing/invoices",
+        json={
+            "branch_id": branch_id, "patient_id": patient_id, "encounter_id": encounter_id, "source_type": "PHARMACY",
+            "line_items": [{"source_type": "PHARMACY", "description": "Paracetamol", "quantity": 1, "unit_price": 20}],
+        },
+        headers=owner_headers,
+    )
+    assert pharmacy_invoice.status_code == 201
+    assert pharmacy_invoice.json()["source_type"] == "PHARMACY"
+
+    by_encounter = await api_client.get(f"/api/v1/billing/invoices?encounter_id={encounter_id}", headers=owner_headers)
+    assert by_encounter.json()["total"] == 2
 
 
 # ---- Line items / DRAFT editing -------------------------------------------------------
@@ -244,16 +295,25 @@ async def test_payment_lifecycle_partial_then_full(api_client: AsyncClient, owne
 
     partial = await api_client.post("/api/v1/billing/payments", json={"invoice_id": invoice_id, "amount": 400, "method": "CASH"}, headers=owner_headers)
     assert partial.status_code == 201
+    assert partial.json()["recorded_by_name"]  # PRD's "received_by" — resolved to a display name, not a raw UUID
     refetch_1 = await api_client.get(f"/api/v1/billing/invoices/{invoice_id}", headers=owner_headers)
-    assert refetch_1.json()["status"] == "PARTIALLY_PAID"
-    assert refetch_1.json()["balance_due"] == "600.00"
+    body_1 = refetch_1.json()
+    assert body_1["status"] == "PARTIALLY_PAID"
+    assert body_1["payment_status"] == "PARTIAL"
+    assert body_1["balance_due"] == "600.00"
+    assert body_1["outstanding_amount"] == "600.00"
+    assert body_1["paid_amount"] == "400.00"
 
     full = await api_client.post("/api/v1/billing/payments", json={"invoice_id": invoice_id, "amount": 600, "method": "UPI"}, headers=owner_headers)
     assert full.status_code == 201
     refetch_2 = await api_client.get(f"/api/v1/billing/invoices/{invoice_id}", headers=owner_headers)
-    assert refetch_2.json()["status"] == "PAID"
-    assert refetch_2.json()["balance_due"] == "0.00"
-    assert len(refetch_2.json()["payments"]) == 2
+    body_2 = refetch_2.json()
+    assert body_2["status"] == "PAID"
+    assert body_2["payment_status"] == "PAID"
+    assert body_2["balance_due"] == "0.00"
+    assert body_2["outstanding_amount"] == "0.00"
+    assert len(body_2["payments"]) == 2
+    assert all(p["recorded_by_name"] for p in body_2["payments"])
 
 
 async def test_cannot_record_payment_on_a_draft_invoice(api_client: AsyncClient, owner_headers: dict[str, str]) -> None:
