@@ -41,6 +41,9 @@ const PortalHomePage = lazy(() => import('@/pages/portal/portal-home-page').then
 const PortalAppointmentsPage = lazy(() =>
   import('@/pages/portal/portal-appointments-page').then((m) => ({ default: m.PortalAppointmentsPage })),
 )
+const PortalMedicalRecordsPage = lazy(() =>
+  import('@/pages/portal/portal-medical-records-page').then((m) => ({ default: m.PortalMedicalRecordsPage })),
+)
 
 export default function App() {
   return (
@@ -60,6 +63,7 @@ export default function App() {
               >
                 <Route path="/portal" element={<PortalHomePage />} />
                 <Route path="/portal/appointments" element={<PortalAppointmentsPage />} />
+                <Route path="/portal/records" element={<PortalMedicalRecordsPage />} />
               </Route>
               <Route
                 element={

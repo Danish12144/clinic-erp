@@ -5,12 +5,12 @@ import { useAuth } from '@/features/auth/auth-context'
 import { cn } from '@/lib/utils'
 
 // Deliberately only lists screens that actually exist — add an entry here
-// as each portal screen ships (Medical Records, Prescriptions, Billing,
-// Lab Results), not ahead of it; a nav link to a route that 404s is worse
-// than a short nav.
+// as each portal screen ships (Billing, Lab Results), not ahead of it; a
+// nav link to a route that 404s is worse than a short nav.
 const PORTAL_NAV_ITEMS = [
   { to: '/portal', label: 'Home' },
   { to: '/portal/appointments', label: 'Appointments' },
+  { to: '/portal/records', label: 'Medical Records' },
 ]
 
 export function PortalShell() {
