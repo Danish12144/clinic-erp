@@ -1,6 +1,6 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { CalendarClock, CheckCircle2, HeartPulse, RefreshCcw } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Controller, useForm } from 'react-hook-form'
 import { useParams } from 'react-router-dom'
 import { toast } from 'sonner'
@@ -52,6 +52,21 @@ export function PublicBookingPage() {
   const slotsQuery = usePublicSlots(clinicSlug, doctorId || undefined, doctorId ? dateValue : undefined)
   const bookMutation = useBookPublicAppointment(clinicSlug ?? '')
   const retryMutation = useRetryPublicPayment(clinicSlug ?? '')
+
+  // Single-branch clinics (the common case) shouldn't have to pick one —
+  // auto-select it as soon as the list loads, same precedent
+  // NewPatientDialog already established. Without this, `branchId` stays
+  // '' forever for a one-branch clinic (nothing here ever sets it), which
+  // still doesn't filter the doctor list (branch_id=undefined means "no
+  // filter" server-side) but does leave the branch silently unselected
+  // for the booking payload once a doctor is BRANCH-scoped in a
+  // multi-branch clinic — this keeps the single-branch case fully wired
+  // instead of relying on that being harmless today.
+  useEffect(() => {
+    if (branchesQuery.data?.length === 1 && !branchId) {
+      setBranchId(branchesQuery.data[0].id)
+    }
+  }, [branchesQuery.data, branchId])
 
   const branchSelectItems = useMemo(
     () => Object.fromEntries((branchesQuery.data ?? []).map((b) => [b.id, b.name])),

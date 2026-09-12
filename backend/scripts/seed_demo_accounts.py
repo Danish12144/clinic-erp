@@ -40,6 +40,17 @@ doctor_profiles, not just users, and 422s with "Doctor does not exist"
 without one. See `scripts/fix_demo_doctor_profile.py` for the one-off
 repair this same fix was back-ported from.
 
+Every non-DOCTOR account likewise gets a companion `staff_profiles` row —
+the exact same class of gap as the doctor_profiles one above, just never
+caught until a later pass: `StaffRepository.search()` (the query behind
+`GET /api/v1/staff`, which the Staff Directory frontend page calls) INNER
+JOINs `users` with `staff_profiles`, so a `User` row with no matching
+`staff_profiles` row is invisible to that endpoint — silently, no error,
+it just never shows up in the list. This script always only inserted the
+bare `users` row for these 5 accounts, so they've never actually been
+visible in the Staff Directory. See `scripts/fix_demo_staff_profiles.py`
+for the one-off repair this same fix was back-ported from.
+
 Every account (not just DOCTOR) also gets a `user_branch_assignments` row
 for the clinic's first branch — discovered missing live too, the same
 way: the staff Appointments page refuses to show a booking calendar for
@@ -69,10 +80,17 @@ from app.core.security import hash_password
 from app.modules.auth.models import Permission, PermissionOverride, Role, User, UserStatus
 from app.modules.doctors.models import DoctorProfile
 from app.modules.doctors.repository import BranchAssignmentRepository
+from app.modules.staff.models import StaffProfile
 from app.modules.tenancy.models import Branch, Clinic, ClinicStatus
 
 CLINIC_SLUG = "my-clinic"
 CLINIC_NAME = "My Clinic"
+
+# Mirrors app/modules/staff/schemas.py::StaffRoleCode — the roles the real
+# Staff Management module (staff_profiles) actually covers. OWNER and
+# DOCTOR are deliberately not in this set (DOCTOR gets doctor_profiles
+# instead, handled separately above; OWNER gets neither).
+STAFF_ROLE_CODES = ("RECEPTIONIST", "NURSE", "LAB_STAFF", "PHARMACY_STAFF", "OTHER_STAFF")
 
 # Phase 1 (Master Handoff item 4, "Accountant permission bundle") — this
 # demo tenant's one finance/accounts persona (mapped onto OTHER_STAFF,
@@ -176,6 +194,19 @@ async def seed() -> None:
                     profile.working_hours = DOCTOR_WORKING_HOURS
                     profile.consultation_fee = profile.consultation_fee or DOCTOR_CONSULTATION_FEE
                     print(f"           + doctor_profiles row already existed - refreshed")
+            elif role_code in STAFF_ROLE_CODES:
+                # Owner is deliberately excluded — it's neither a DOCTOR nor
+                # one of the five real Staff Management roles, and giving it
+                # a staff_profiles row would make it show up in GET
+                # /api/v1/staff (the Staff Directory's "staff" half)
+                # alongside the actual staff, which the real POST /staff
+                # provisioning path would never do either.
+                staff_profile = (
+                    await session.execute(select(StaffProfile).where(StaffProfile.user_id == user.id))
+                ).scalar_one_or_none()
+                if staff_profile is None:
+                    session.add(StaffProfile(user_id=user.id, tenant_id=clinic.id, designation=last_name))
+                    print(f"           + created staff_profiles row")
 
             existing_branch_ids = await branch_repo.get_branch_ids(user.id)
             if branch.id not in existing_branch_ids:
