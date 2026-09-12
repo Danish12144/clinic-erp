@@ -12,13 +12,13 @@ reschedule_my), so the same rules apply everywhere a slot is chosen.
 """
 
 import uuid
-from datetime import datetime, time, timedelta, timezone
+from datetime import datetime
+from decimal import Decimal
 
 from fastapi import HTTPException, status
 
-from app.core.config import get_settings
 from app.core.db import tenant_session
-from app.modules.appointments.models import Appointment, AppointmentSource, AppointmentStatus
+from app.modules.appointments.models import Appointment, AppointmentPaymentStatus, AppointmentSource, AppointmentStatus
 from app.modules.appointments.repository import AppointmentRepository
 from app.modules.appointments.schemas import (
     AppointmentCreateRequest,
@@ -27,16 +27,14 @@ from app.modules.appointments.schemas import (
     AppointmentSummary,
     MyAppointmentCreateRequest,
 )
+from app.modules.appointments.slot_validation import validate_and_lock_slot
 from app.modules.audit.service import record as record_audit
-from app.modules.auth.models import UserStatus
-from app.modules.doctors.repository import DoctorRepository
+from app.modules.billing.models import PaymentGatewayOrderStatus
+from app.modules.billing.payment_gateway import get_payment_gateway_adapter
+from app.modules.billing.repository import PaymentGatewayOrderRepository
 from app.modules.notifications.models import CommChannel
 from app.modules.notifications.service import dispatch_notification
 from app.modules.patients.repository import PatientRepository
-from app.modules.tenancy.repository import BranchRepository
-from app.modules.tenancy.schemas import WorkingHours
-
-_WEEKDAY_CODES = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 
 
 class AppointmentService:
@@ -50,42 +48,16 @@ class AppointmentService:
         duration_minutes: int,
         exclude_appointment_id: uuid.UUID | None = None,
     ) -> None:
-        if await BranchRepository(session).get_by_id(branch_id) is None:
-            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"Branch '{branch_id}' does not exist")
-
-        found = await DoctorRepository(session).get_user_and_profile(doctor_id)
-        if found is None:
-            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"Doctor '{doctor_id}' does not exist")
-        doctor_user, doctor_profile = found
-        if doctor_user.status != UserStatus.ACTIVE:
-            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Doctor is not currently available for booking")
-
-        end_at = scheduled_at + timedelta(minutes=duration_minutes)
-        if end_at.date() != scheduled_at.date():
-            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Appointment cannot span midnight")
-
-        # Pre-launch testing accommodation (Settings.appointment_enforce_
-        # working_hours, default off): skip the doctor's declared window
-        # entirely so booking/instant check-in isn't blocked outside a
-        # doctor's configured hours during end-to-end testing — the
-        # doctor-exists/branch-exists/overlap checks above and below still
-        # apply either way. See that setting's own docstring.
-        if get_settings().appointment_enforce_working_hours:
-            working_hours = WorkingHours.model_validate(doctor_profile.working_hours or {})
-            day_hours = getattr(working_hours, _WEEKDAY_CODES[scheduled_at.weekday()])
-            if day_hours is None:
-                raise HTTPException(status.HTTP_409_CONFLICT, "Doctor is not available on the requested day")
-
-            open_time = time.fromisoformat(day_hours.open)
-            close_time = time.fromisoformat(day_hours.close)
-            if scheduled_at.time() < open_time or end_at.time() > close_time:
-                raise HTTPException(status.HTTP_409_CONFLICT, "Requested time is outside the doctor's working hours")
-
-        repo = AppointmentRepository(session)
-        if await repo.has_overlap(
-            doctor_id=doctor_id, scheduled_at=scheduled_at, duration_minutes=duration_minutes, exclude_appointment_id=exclude_appointment_id
-        ):
-            raise HTTPException(status.HTTP_409_CONFLICT, "Doctor already has an appointment at this time")
+        # Phase 2 refactor — the actual logic (plus a new advisory-lock
+        # concurrency guard, item 1) now lives in
+        # app/modules/appointments/slot_validation.py as a free function,
+        # so the new public self-booking module can reuse the exact same
+        # validation without one module's Service calling another's — see
+        # that module's own docstring for why.
+        await validate_and_lock_slot(
+            session, doctor_id=doctor_id, branch_id=branch_id, scheduled_at=scheduled_at,
+            duration_minutes=duration_minutes, exclude_appointment_id=exclude_appointment_id,
+        )
 
     async def _resolve_own_patient_id(self, session, *, user_id: uuid.UUID) -> uuid.UUID:
         patient = await PatientRepository(session).get_by_user_id(user_id)
@@ -104,8 +76,9 @@ class AppointmentService:
         duration_minutes: int,
         notes: str | None,
         source: AppointmentSource,
-        actor_user_id: uuid.UUID,
+        actor_user_id: uuid.UUID | None,
         actor_role: str,
+        payment_status: AppointmentPaymentStatus = AppointmentPaymentStatus.NOT_REQUIRED,
     ) -> AppointmentSummary:
         async with tenant_session(tenant_id) as session:
             await self._validate_slot(
@@ -120,6 +93,7 @@ class AppointmentService:
                 scheduled_at=scheduled_at,
                 duration_minutes=duration_minutes,
                 notes=notes,
+                payment_status=payment_status,
             )
             summary = AppointmentSummary.model_validate(appointment)
             await record_audit(
@@ -175,6 +149,30 @@ class AppointmentService:
             source=AppointmentSource.ONLINE,
             actor_user_id=user_id,
             actor_role=actor_role,
+        )
+
+    async def create_public_appointment(
+        self, *, tenant_id: uuid.UUID, patient_id: uuid.UUID, branch_id: uuid.UUID, doctor_id: uuid.UUID,
+        scheduled_at: datetime, duration_minutes: int, notes: str | None, payment_status: AppointmentPaymentStatus,
+    ) -> AppointmentSummary:
+        """Phase 2 (Master Handoff item 1) — the "brand-new patient,
+        never staff-registered" booking path (`app/modules/public/`).
+        `actor_user_id=None`/`actor_role="PUBLIC"` — there is no
+        authenticated caller at all, unlike every other booking path
+        (Owner/Receptionist, or a logged-in Patient), matching
+        `AuditLog.actor_user_id`'s existing nullability."""
+        return await self._create(
+            tenant_id=tenant_id,
+            patient_id=patient_id,
+            branch_id=branch_id,
+            doctor_id=doctor_id,
+            scheduled_at=scheduled_at,
+            duration_minutes=duration_minutes,
+            notes=notes,
+            source=AppointmentSource.ONLINE,
+            actor_user_id=None,
+            actor_role="PUBLIC",
+            payment_status=payment_status,
         )
 
     async def search_appointments(
@@ -307,13 +305,29 @@ class AppointmentService:
             )
 
     async def _cancel(
-        self, session, *, tenant_id: uuid.UUID, appointment: Appointment, reason: str, actor_user_id: uuid.UUID, actor_role: str
+        self, session, *, tenant_id: uuid.UUID, appointment: Appointment, reason: str, actor_user_id: uuid.UUID | None, actor_role: str
     ) -> AppointmentSummary:
         if appointment.status in (AppointmentStatus.CANCELLED, AppointmentStatus.NO_SHOW):
             raise HTTPException(status.HTTP_409_CONFLICT, f"Appointment is already {appointment.status.value}")
 
         before = AppointmentSummary.model_validate(appointment)
         repo = AppointmentRepository(session)
+
+        # Phase 2 (Master Handoff items 4/5) — a booking whose online
+        # prepayment already succeeded gets a real gateway refund on
+        # cancellation, and payment_status moves to REFUNDED; PENDING/
+        # FAILED prepayments have no captured money to return, so those
+        # are left as-is (the appointment being CANCELLED already makes
+        # the pending/failed order moot — nothing left to retry against).
+        if appointment.payment_status == AppointmentPaymentStatus.CONFIRMED:
+            order_repo = PaymentGatewayOrderRepository(session)
+            order = await order_repo.get_latest_for_appointment(appointment.id)
+            if order is not None and order.provider_payment_id:
+                adapter = get_payment_gateway_adapter()
+                await adapter.refund(provider_payment_id=order.provider_payment_id, amount=Decimal(str(order.amount)))
+                await order_repo.mark_status(order.id, status=PaymentGatewayOrderStatus.REFUNDED)
+            await repo.set_payment_status(appointment.id, payment_status=AppointmentPaymentStatus.REFUNDED)
+
         await repo.cancel(appointment.id, reason=reason, cancelled_by=actor_user_id)
         updated = await repo.get_by_id(appointment.id)
         assert updated is not None

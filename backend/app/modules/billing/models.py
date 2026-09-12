@@ -122,3 +122,46 @@ class Payment(Base):
     recorded_by: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class PaymentGatewayOrderStatus(str, PyEnum):
+    CREATED = "CREATED"
+    PAID = "PAID"
+    FAILED = "FAILED"
+    REFUNDED = "REFUNDED"
+
+
+payment_gateway_order_status_enum = SAEnum(
+    PaymentGatewayOrderStatus, name="payment_gateway_order_status", create_type=False,
+    values_callable=lambda enum: [m.value for m in enum],
+)
+
+
+class PaymentGatewayOrder(Base):
+    """Phase 2 (Master Handoff item 4) — the ledger for a public booking's
+    optional online prepayment (migration 0034). Deliberately separate
+    from `Invoice`/`Payment`: no clinical encounter/invoice exists yet at
+    public-booking time, so this table is its own source of truth for
+    "did the gateway actually confirm this money," reconciled purely via
+    `provider_order_id` against the gateway's webhook — see
+    `app/modules/billing/payment_gateway.py` and
+    `PaymentGatewayWebhookService`."""
+
+    __tablename__ = "payment_gateway_orders"
+
+    id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
+    tenant_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("clinics.id", ondelete="CASCADE"), nullable=False)
+    appointment_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("appointments.id", ondelete="CASCADE"), nullable=False
+    )
+    provider: Mapped[str] = mapped_column(Text, nullable=False)
+    provider_order_id: Mapped[str] = mapped_column(Text, nullable=False)
+    amount: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
+    currency: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'INR'"))
+    status: Mapped[PaymentGatewayOrderStatus] = mapped_column(
+        payment_gateway_order_status_enum, nullable=False, server_default=text("'CREATED'::payment_gateway_order_status")
+    )
+    provider_payment_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

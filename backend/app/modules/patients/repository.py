@@ -60,6 +60,20 @@ class PatientRepository:
         )
         return result.scalar_one_or_none()
 
+    async def find_by_phone(self, *, tenant_id: uuid.UUID, phone: str) -> Patient | None:
+        """Phase 2 (Master Handoff item 1, public self-booking) —
+        find-or-create-by-phone for a *guest* booking a slot with no
+        account at all yet. Unlike `find_unlinked_by_phone` (self-service
+        portal auto-linking's own narrower candidate search), this matches
+        any patient with this phone regardless of `user_id`, so a
+        returning patient who already has a portal account still gets
+        their existing record reused rather than a duplicate Patient
+        being created under the same phone number."""
+        result = await self._session.execute(
+            select(Patient).where(Patient.tenant_id == tenant_id, Patient.phone == phone, Patient.deleted_at.is_(None))
+        )
+        return result.scalars().first()
+
     async def find_unlinked_by_phone(self, *, tenant_id: uuid.UUID, phone: str) -> list[Patient]:
         """Candidates for self-service portal auto-linking (see
         AuthService.request_patient_otp) — only patients with no

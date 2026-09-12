@@ -90,6 +90,14 @@ CREATE TYPE subscription_status   AS ENUM ('TRIALING','ACTIVE','PAST_DUE','CANCE
 CREATE TYPE user_status           AS ENUM ('INVITED','ACTIVE','INACTIVE','SUSPENDED');
 CREATE TYPE appointment_source    AS ENUM ('ONLINE','RECEPTIONIST','WALK_IN');
 CREATE TYPE appointment_status    AS ENUM ('SCHEDULED','CHECKED_IN','IN_PROGRESS','COMPLETED','CANCELLED','NO_SHOW');
+-- Phase 2 (migration 0034) — the public-booking online-prepayment
+-- lifecycle, orthogonal to appointment_status above. See
+-- appointments.payment_status's own column comment below.
+CREATE TYPE appointment_payment_status AS ENUM ('NOT_REQUIRED','PENDING','CONFIRMED','FAILED','REFUNDED');
+-- Phase 2 (migration 0034) — status of a payment_gateway_orders row (a
+-- booking-time prepayment order), distinct from invoice_status/payment_method
+-- below, which model an actual clinical-encounter bill instead.
+CREATE TYPE payment_gateway_order_status AS ENUM ('CREATED','PAID','FAILED','REFUNDED');
 CREATE TYPE encounter_status      AS ENUM ('OPEN','IN_CONSULTATION','COMPLETED','CANCELLED');
 CREATE TYPE queue_token_status    AS ENUM ('WAITING','CALLED','IN_PROGRESS','DONE','NO_SHOW','SKIPPED');
 CREATE TYPE inventory_txn_type    AS ENUM ('RECEIVE','DISPENSE','SALE','ADJUST','EXPIRE_WRITE_OFF');
@@ -414,6 +422,13 @@ CREATE TABLE appointments (
   scheduled_at     timestamptz NOT NULL,
   duration_minutes int NOT NULL DEFAULT 15,
   status           appointment_status NOT NULL DEFAULT 'SCHEDULED',
+  -- Phase 2 (migration 0034) — orthogonal to `status` above (the clinical
+  -- day-of workflow): tracks a public online booking's optional prepayment
+  -- lifecycle. NOT_REQUIRED for every staff/walk-in booking and any public
+  -- booking that didn't opt into prepayment; PENDING/CONFIRMED/FAILED/
+  -- REFUNDED only ever set by the payment gateway webhook or a refund on
+  -- cancellation — see app/modules/appointments/models.py::AppointmentPaymentStatus.
+  payment_status   appointment_payment_status NOT NULL DEFAULT 'NOT_REQUIRED',
   notes            text,
   cancelled_reason text,
   cancelled_by     UUID REFERENCES users(id),
@@ -815,6 +830,29 @@ CREATE TABLE payments (
 );
 CREATE INDEX ix_payments_invoice ON payments (invoice_id);
 
+-- Phase 2 (migration 0034) — a dedicated ledger for a public booking's
+-- optional online prepayment, deliberately NOT layered into invoices/
+-- payments above: no clinical encounter/invoice exists yet at
+-- public-booking time. Reconciled purely via provider_order_id against the
+-- gateway's own webhook (app/modules/billing/webhook_service.py). See
+-- app/modules/billing/models.py::PaymentGatewayOrder's own docstring.
+CREATE TABLE payment_gateway_orders (
+  id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id           UUID NOT NULL REFERENCES clinics(id) ON DELETE CASCADE,
+  appointment_id      UUID NOT NULL REFERENCES appointments(id) ON DELETE CASCADE,
+  provider            text NOT NULL,
+  provider_order_id   text NOT NULL,
+  amount              numeric(12,2) NOT NULL,
+  currency            text NOT NULL DEFAULT 'INR',
+  status              payment_gateway_order_status NOT NULL DEFAULT 'CREATED',
+  provider_payment_id text,
+  failure_reason      text,
+  created_at          timestamptz NOT NULL DEFAULT now(),
+  updated_at          timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX ux_payment_gateway_orders_provider_order ON payment_gateway_orders (provider, provider_order_id);
+CREATE INDEX ix_payment_gateway_orders_appointment ON payment_gateway_orders (appointment_id);
+
 -- Deviations from this table's original sketch, all by direct instruction
 -- (migration 0020, see docs/DATABASE-SCHEMA.md's changelog for the full
 -- rationale): `category` is a real enum, not free text; `payment_mode` is
@@ -1210,7 +1248,7 @@ BEGIN
     'appointments','encounters','queue_tokens','consultations','medicines',
     'medicine_batches','prescription_items','lab_test_catalog',
     'lab_orders','lab_results','invoices','invoice_line_items','expenses','inventory_items','leads',
-    'follow_ups','notification_templates','telemedicine_sessions','abha_links'
+    'follow_ups','notification_templates','telemedicine_sessions','abha_links','payment_gateway_orders'
   ])
   LOOP
     EXECUTE format(
@@ -1267,7 +1305,7 @@ BEGIN
     'invoices','invoice_line_items','payments','expenses','inventory_items',
     'inventory_transactions','leads','lead_interactions','follow_ups','notification_templates',
     'communication_logs','audit_logs','documents','medical_documents','telemedicine_sessions',
-    'ai_interaction_logs','abha_links'
+    'ai_interaction_logs','abha_links','payment_gateway_orders'
   ])
   LOOP
     EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);

@@ -6,7 +6,16 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.modules.billing.models import Invoice, InvoiceLineItem, InvoiceLineSource, InvoiceStatus, Payment
+from app.core.db import platform_admin_session
+from app.modules.billing.models import (
+    Invoice,
+    InvoiceLineItem,
+    InvoiceLineSource,
+    InvoiceStatus,
+    Payment,
+    PaymentGatewayOrder,
+    PaymentGatewayOrderStatus,
+)
 from app.modules.checkin.models import Encounter
 from app.modules.consultation.models import Consultation
 
@@ -164,3 +173,82 @@ class PaymentRepository:
             select(Payment).where(*filters).order_by(Payment.recorded_at.desc()).limit(limit).offset(offset)
         )
         return list(page_result.scalars().all()), total
+
+
+class PaymentGatewayOrderRepository:
+    """Backs Phase 2's public-booking prepayment flow — see
+    `PaymentGatewayOrder`'s own docstring. `resolve_tenant_id_for_provider_order`
+    is the one method here that reaches outside the normal tenant-scoped
+    session: a gateway webhook arrives with no JWT and no clinic slug, only
+    a `provider_order_id`, so there's no tenant to scope a session to until
+    that id is resolved — the same "one legitimate pre-authentication,
+    cross-tenant read" shape as `TenantResolutionRepository.
+    get_active_clinic_by_slug`, just keyed by gateway order id instead of
+    clinic slug."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def create(
+        self, *, tenant_id: uuid.UUID, appointment_id: uuid.UUID, provider: str, provider_order_id: str,
+        amount: Decimal, currency: str,
+    ) -> PaymentGatewayOrder:
+        order = PaymentGatewayOrder(
+            tenant_id=tenant_id, appointment_id=appointment_id, provider=provider,
+            provider_order_id=provider_order_id, amount=amount, currency=currency,
+        )
+        self._session.add(order)
+        await self._session.flush()
+        return order
+
+    async def get_latest_for_appointment(self, appointment_id: uuid.UUID) -> PaymentGatewayOrder | None:
+        result = await self._session.execute(
+            select(PaymentGatewayOrder)
+            .where(PaymentGatewayOrder.appointment_id == appointment_id)
+            .order_by(PaymentGatewayOrder.created_at.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
+    async def get_by_provider_order_id(self, *, provider: str, provider_order_id: str) -> PaymentGatewayOrder | None:
+        result = await self._session.execute(
+            select(PaymentGatewayOrder).where(
+                PaymentGatewayOrder.provider == provider, PaymentGatewayOrder.provider_order_id == provider_order_id
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def get_by_provider_payment_id(self, provider_payment_id: str) -> PaymentGatewayOrder | None:
+        result = await self._session.execute(
+            select(PaymentGatewayOrder).where(PaymentGatewayOrder.provider_payment_id == provider_payment_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def mark_status(
+        self, order_id: uuid.UUID, *, status: PaymentGatewayOrderStatus, provider_payment_id: str | None = None,
+        failure_reason: str | None = None,
+    ) -> None:
+        values: dict[str, object] = {"status": status, "updated_at": datetime.now(timezone.utc)}
+        if provider_payment_id is not None:
+            values["provider_payment_id"] = provider_payment_id
+        if failure_reason is not None:
+            values["failure_reason"] = failure_reason
+        await self._session.execute(update(PaymentGatewayOrder).where(PaymentGatewayOrder.id == order_id).values(**values))
+
+    @staticmethod
+    async def resolve_tenant_id_for_provider_order(*, provider: str, provider_order_id: str) -> uuid.UUID | None:
+        async with platform_admin_session() as session:
+            result = await session.execute(
+                select(PaymentGatewayOrder.tenant_id).where(
+                    PaymentGatewayOrder.provider == provider, PaymentGatewayOrder.provider_order_id == provider_order_id
+                )
+            )
+            return result.scalar_one_or_none()
+
+    @staticmethod
+    async def resolve_tenant_id_for_provider_payment(provider_payment_id: str) -> uuid.UUID | None:
+        async with platform_admin_session() as session:
+            result = await session.execute(
+                select(PaymentGatewayOrder.tenant_id).where(PaymentGatewayOrder.provider_payment_id == provider_payment_id)
+            )
+            return result.scalar_one_or_none()

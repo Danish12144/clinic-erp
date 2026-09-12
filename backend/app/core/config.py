@@ -123,17 +123,34 @@ class Settings(BaseSettings):
     r2_region: str = "auto"
 
     # Notification channel adapters (§16) — "console" (default) logs the
-    # message and simulates success, no real send. Swap to a real provider
-    # later purely via config; see app/modules/notifications/adapters.py.
+    # message and simulates success, no real send. "twilio" (Phase 2)
+    # sends a real SMS/WhatsApp message via Twilio's REST API — see
+    # app/modules/notifications/adapters.py::TwilioChannelAdapter. Setting
+    # either provider to "twilio" without the three settings below fails
+    # loud at first send rather than silently no-op'ing.
     sms_provider: str = "console"
     whatsapp_provider: str = "console"
     email_provider: str = "console"
 
+    twilio_account_sid: str = ""
+    twilio_auth_token: str = ""
+    twilio_from_number: str = ""  # SMS sender, e.g. "+14155238886"
+    twilio_whatsapp_from: str = ""  # WhatsApp sender, e.g. "whatsapp:+14155238886"
+
     # Payment gateway adapter (§17) — "mock" (default) simulates a gateway
-    # order/intent with no real payment created. Swap to "razorpay"/
-    # "cashfree" later purely via config; see
-    # app/modules/billing/payment_gateway.py.
+    # order/intent with no real payment created. "razorpay" (Phase 2)
+    # creates a real order/refund via Razorpay's REST API — see
+    # app/modules/billing/payment_gateway.py::RazorpayPaymentGatewayAdapter.
+    # Setting this to "razorpay" without the two key settings below fails
+    # loud at first use rather than silently falling back to "mock".
     payment_gateway_provider: str = "mock"
+
+    razorpay_key_id: str = ""
+    razorpay_key_secret: str = ""
+    # Distinct from key_secret — configured once in the Razorpay dashboard
+    # specifically for webhook signing (§17's "webhook processing"). See
+    # app/modules/billing/payment_gateway.py::verify_razorpay_webhook_signature.
+    razorpay_webhook_secret: str = ""
 
     # Pre-launch testing accommodation — permissive by default so live
     # end-to-end testing isn't blocked by a rule that only matters once a

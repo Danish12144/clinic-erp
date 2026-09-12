@@ -48,6 +48,34 @@ appointment_status_enum = SAEnum(
 )
 
 
+class AppointmentPaymentStatus(str, PyEnum):
+    """Phase 2 (Master Handoff item 5) — orthogonal to `AppointmentStatus`
+    above, which is the clinical day-of workflow (arrival/consultation/
+    completion) and untouched by this. This tracks the separate "did an
+    online prepayment on this booking succeed" lifecycle (migration 0034):
+    NOT_REQUIRED (the default — every staff/walk-in booking, and any
+    public booking that didn't opt into prepayment) never changes.
+    PENDING -> CONFIRMED/FAILED is set only by the payment gateway webhook
+    (`PaymentGatewayWebhookService`); FAILED -> PENDING again is the
+    "retry" path (a fresh gateway order); CONFIRMED -> REFUNDED happens
+    only when the appointment is cancelled after a confirmed prepayment.
+    Never set directly by request/reschedule/cancel logic otherwise — the
+    same "always derived, only at specific transition points" discipline
+    `Invoice.status` already follows."""
+
+    NOT_REQUIRED = "NOT_REQUIRED"
+    PENDING = "PENDING"
+    CONFIRMED = "CONFIRMED"
+    FAILED = "FAILED"
+    REFUNDED = "REFUNDED"
+
+
+appointment_payment_status_enum = SAEnum(
+    AppointmentPaymentStatus, name="appointment_payment_status", create_type=False,
+    values_callable=lambda enum: [m.value for m in enum],
+)
+
+
 class Appointment(Base):
     __tablename__ = "appointments"
 
@@ -61,6 +89,9 @@ class Appointment(Base):
     duration_minutes: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("15"))
     status: Mapped[AppointmentStatus] = mapped_column(
         appointment_status_enum, nullable=False, server_default=text("'SCHEDULED'::appointment_status")
+    )
+    payment_status: Mapped[AppointmentPaymentStatus] = mapped_column(
+        appointment_payment_status_enum, nullable=False, server_default=text("'NOT_REQUIRED'::appointment_payment_status")
     )
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     cancelled_reason: Mapped[str | None] = mapped_column(Text, nullable=True)

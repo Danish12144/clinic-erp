@@ -332,20 +332,69 @@ async def test_otp_static_code_is_issued_and_revealed_even_when_is_production(
     assert verified.status_code == 200
 
 
-async def test_otp_static_code_still_hides_for_an_unregistered_phone(
+async def test_otp_static_code_allows_a_brand_new_phone_to_self_provision_and_log_in(
     api_client: AsyncClient, test_clinic: Clinic, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Static-code mode must not weaken the anti-enumeration guarantee --
-    an unregistered phone still gets the same generic, code-free response
-    it always did, static mode or not."""
+    """Phase 2 (Master Handoff item 2) — fixes a real bug: a phone number
+    with zero existing Patient/User rows (never registered any other
+    way) used to get a debug_code-free response at request time (nothing
+    to attach an OTP row to), and then unconditionally 401 "Invalid or
+    expired code" at verify time even with the correct static demo code,
+    because verify_patient_otp required an existing User to already
+    exist. Static-code mode now reveals the code for this phone too (the
+    frontend's own helper text can say "use 123456"), and verify
+    auto-provisions a brand-new Patient + linked PATIENT user inline
+    rather than 401ing."""
+    settings = get_settings()
+    monkeypatch.setattr(settings, "otp_static_code", "123456")
+    phone = "+919800000998"
+
+    requested = await api_client.post(
+        "/api/v1/auth/patient/otp/request", json={"clinic_slug": test_clinic.slug, "phone": phone}
+    )
+    assert requested.status_code == 200
+    assert requested.json()["debug_code"] == "123456"
+
+    verified = await api_client.post(
+        "/api/v1/auth/patient/otp/verify", json={"clinic_slug": test_clinic.slug, "phone": phone, "code": "123456"}
+    )
+    assert verified.status_code == 200
+    assert verified.json()["user"]["role_code"] == "PATIENT"
+    assert verified.json()["user"]["phone"] == phone
+
+
+async def test_otp_static_code_rejects_the_wrong_code_for_a_brand_new_phone(
+    api_client: AsyncClient, test_clinic: Clinic, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The static-code fallback only ever accepts the exact configured
+    code — a brand-new phone submitting anything else still 401s, rather
+    than every submitted code silently succeeding."""
     settings = get_settings()
     monkeypatch.setattr(settings, "otp_static_code", "123456")
 
     response = await api_client.post(
-        "/api/v1/auth/patient/otp/request", json={"clinic_slug": test_clinic.slug, "phone": "+919800000998"}
+        "/api/v1/auth/patient/otp/verify",
+        json={"clinic_slug": test_clinic.slug, "phone": "+919800000997", "code": "000000"},
     )
-    assert response.status_code == 200
-    assert response.json()["debug_code"] is None
+    assert response.status_code == 401
+
+
+async def test_otp_static_code_does_not_let_a_staff_phone_authenticate_as_patient(
+    api_client: AsyncClient, test_clinic: Clinic, make_staff_user, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A staff member's own phone must never be hijacked into a PATIENT
+    session via the static-code fallback, even though that phone has no
+    OTP row and would otherwise look just like a brand-new number."""
+    settings = get_settings()
+    monkeypatch.setattr(settings, "otp_static_code", "123456")
+    staff_phone = "+919800000996"
+    await make_staff_user(role_code="RECEPTIONIST", phone=staff_phone)
+
+    response = await api_client.post(
+        "/api/v1/auth/patient/otp/verify",
+        json={"clinic_slug": test_clinic.slug, "phone": staff_phone, "code": "123456"},
+    )
+    assert response.status_code == 401
 
 
 async def test_otp_static_code_unset_preserves_original_production_behavior(

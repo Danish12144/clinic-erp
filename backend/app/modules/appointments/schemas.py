@@ -87,6 +87,7 @@ class AppointmentSummary(BaseModel):
     scheduled_at: datetime
     duration_minutes: int
     status: str
+    payment_status: str
     notes: str | None
     cancelled_reason: str | None
     cancelled_by: uuid.UUID | None

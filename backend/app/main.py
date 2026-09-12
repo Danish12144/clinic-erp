@@ -5,7 +5,11 @@ from app.core.config import get_settings
 from app.modules.appointments.router import router as appointments_router
 from app.modules.audit.router import router as audit_router
 from app.modules.auth.router import permission_override_router, router as auth_router
-from app.modules.billing.router import invoice_router as billing_invoice_router, payment_router as billing_payment_router
+from app.modules.billing.router import (
+    invoice_router as billing_invoice_router,
+    payment_router as billing_payment_router,
+    webhook_router as billing_webhook_router,
+)
 from app.modules.checkin.router import encounter_router, queue_router
 from app.modules.consultation.router import consultation_router, prescription_router
 from app.modules.crm.router import router as crm_router
@@ -20,6 +24,7 @@ from app.modules.letterhead.router import router as letterhead_router
 from app.modules.notifications.router import notification_router, template_router as notification_template_router
 from app.modules.patients.router import router as patients_router
 from app.modules.pharmacy.router import medicine_router, pharmacy_router
+from app.modules.public.router import router as public_router
 from app.modules.reports.router import billing_summary_router, financial_report_router
 from app.modules.staff.router import router as staff_router
 from app.modules.tenancy.router import branch_router, clinic_router
@@ -54,6 +59,7 @@ app.include_router(prescription_router)
 app.include_router(letterhead_router)
 app.include_router(billing_invoice_router)
 app.include_router(billing_payment_router)
+app.include_router(billing_webhook_router)
 app.include_router(billing_summary_router)
 app.include_router(financial_report_router)
 app.include_router(emr_router)
@@ -70,6 +76,7 @@ app.include_router(leads_router)
 app.include_router(notification_template_router)
 app.include_router(notification_router)
 app.include_router(files_router)
+app.include_router(public_router)
 
 
 @app.get("/health", tags=["health"])

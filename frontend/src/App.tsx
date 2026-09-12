@@ -18,6 +18,7 @@ import { RequirePermission } from '@/routes/require-permission'
 // route themselves) so navigating between already-visited routes doesn't
 // re-suspend on shell chrome.
 const LoginPage = lazy(() => import('@/pages/login-page').then((m) => ({ default: m.LoginPage })))
+const PublicBookingPage = lazy(() => import('@/pages/public-booking-page').then((m) => ({ default: m.PublicBookingPage })))
 const DashboardPage = lazy(() => import('@/pages/dashboard-page').then((m) => ({ default: m.DashboardPage })))
 const AppointmentsPage = lazy(() => import('@/pages/appointments-page').then((m) => ({ default: m.AppointmentsPage })))
 const PatientsPage = lazy(() => import('@/pages/patients-page').then((m) => ({ default: m.PatientsPage })))
@@ -59,6 +60,7 @@ export default function App() {
           <Suspense fallback={<PageLoader />}>
             <Routes>
               <Route path="/login" element={<LoginPage />} />
+              <Route path="/book/:clinicSlug" element={<PublicBookingPage />} />
               <Route path="/portal/login" element={<PortalLoginPage />} />
               <Route
                 element={

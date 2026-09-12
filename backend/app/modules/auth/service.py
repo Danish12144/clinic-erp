@@ -14,6 +14,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException, status
+from sqlalchemy.exc import IntegrityError
 
 from app.core import security
 from app.core.config import get_settings
@@ -121,7 +122,72 @@ class AuthService:
             action="patient_user.self_provision", entity_type="patient", entity_id=patient.id, before=None,
             after={"user_id": str(new_user.id)},
         )
-        return new_user
+        # Re-fetch rather than return `new_user` directly: `create_patient_user`
+        # never populates the `role` relationship (no join at INSERT time),
+        # and this codebase's async session setup doesn't support an
+        # implicit lazy-load of it afterward (raises MissingGreenlet the
+        # moment something touches `.role`, e.g. `_issue_tokens`'s
+        # `user.role.code`) — get_by_phone's `lazy="joined"` query is what
+        # actually populates it. This method's own callers never happened
+        # to touch `.role` before Phase 2 added one that does
+        # (`_provision_patient_from_phone`, verify_patient_otp's new
+        # brand-new-phone branch), so this was a real, dormant bug.
+        refreshed = await user_repo.get_by_phone(phone)
+        assert refreshed is not None
+        return refreshed
+
+    async def _provision_patient_from_phone(self, session, *, tenant_id: uuid.UUID, phone: str) -> User:
+        """Dev/staging fallback (Master Handoff Phase 2 item 2) —
+        auto-provisions a brand-new `Patient` + linked `PATIENT` `User`
+        for a phone number that has never been seen before at all (no
+        existing `User`, no existing unlinked `Patient` for
+        `_resolve_or_provision_patient_user` to match against). Only ever
+        reached from `verify_patient_otp` when `settings.otp_static_code`
+        is set and the caller submitted exactly that code — see this
+        module's own note on why that's safe (a fixed demo code has no
+        secrecy to defeat). first_name is a placeholder ("New Patient",
+        same shape as any other required-but-unknown-yet field) — nothing
+        stops the patient from updating their own name later once a real
+        update-my-profile capability exists; this unblocks login itself,
+        not full profile completeness.
+
+        Mirrors `PatientService.create_patient`'s own MRN-generation
+        retry loop rather than importing `PatientService` — same "each
+        module keeps its own small helpers, cross-module reach stays at
+        the Repository level" precedent `LeadService.convert_lead`
+        already established."""
+        patient_repo = PatientRepository(session)
+        patient = None
+        for _ in range(5):
+            mrn = await patient_repo.next_mrn_candidate(tenant_id=tenant_id)
+            try:
+                patient = await patient_repo.create(tenant_id=tenant_id, mrn=mrn, first_name="New Patient", phone=phone)
+                break
+            except IntegrityError:
+                continue
+        if patient is None:
+            raise HTTPException(status.HTTP_409_CONFLICT, "Could not generate a unique medical record number — please retry")
+
+        patient_role = await RoleRepository(session).get_by_code("PATIENT")
+        if patient_role is None:
+            raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "PATIENT role is not seeded")
+        user_repo = UserRepository(session)
+        new_user = await user_repo.create_patient_user(
+            tenant_id=tenant_id, role_id=patient_role.id, phone=phone, first_name=patient.first_name, last_name=None,
+        )
+        await patient_repo.link_user(patient_id=patient.id, user_id=new_user.id)
+        await record_audit(
+            session, tenant_id=tenant_id, actor_user_id=new_user.id, actor_role="PATIENT",
+            action="patient_user.public_otp_provision", entity_type="patient", entity_id=patient.id, before=None,
+            after={"user_id": str(new_user.id), "mrn": patient.mrn},
+        )
+        # See _resolve_or_provision_patient_user's own comment: re-fetch so
+        # `.role` is eager-loaded (`lazy="joined"`) before `_issue_tokens`
+        # touches `user.role.code` — `new_user` fresh off `create_patient_user`
+        # would raise MissingGreenlet the moment that attribute is read.
+        refreshed = await user_repo.get_by_phone(phone)
+        assert refreshed is not None
+        return refreshed
 
     async def request_patient_otp(self, *, clinic_slug: str, phone: str) -> OtpRequestResponse:
         tenant_id = await self._resolve_tenant_id(clinic_slug)
@@ -129,9 +195,21 @@ class AuthService:
 
         async with tenant_session(tenant_id) as session:
             user = await self._resolve_or_provision_patient_user(session, tenant_id=tenant_id, phone=phone)
-            # Same response whether or not the phone is registered — don't
-            # let an unauthenticated caller enumerate accounts.
+
             if user is None:
+                # No existing/linkable Patient for this phone at all yet.
+                # In dev/staging fallback mode (Settings.otp_static_code
+                # set) this phone can still complete login —
+                # verify_patient_otp auto-provisions a brand-new Patient +
+                # User the instant the universal code is submitted (see
+                # _provision_patient_from_phone) — so the same "no secrecy
+                # to defeat" reveal below applies here too, otherwise the
+                # frontend would have no way to show the helper text for a
+                # phone number nobody has ever registered.
+                if settings.otp_static_code is not None:
+                    return OtpRequestResponse(message=generic_response.message, debug_code=settings.otp_static_code)
+                # Same response whether or not the phone is registered —
+                # don't let an unauthenticated caller enumerate accounts.
                 return generic_response
 
             code = settings.otp_static_code or security.generate_otp_code()
@@ -168,8 +246,35 @@ class AuthService:
         async with tenant_session(tenant_id) as session:
             user_repo = UserRepository(session)
             user = await user_repo.get_by_phone(phone)
-            if user is None or user.role.code != "PATIENT":
+
+            if user is not None and user.role.code != "PATIENT":
+                # A staff member's own phone number must never authenticate
+                # as PATIENT, static-code fallback included.
                 raise invalid_error
+
+            if user is None:
+                # Phase 2 (Master Handoff item 2) — the real bug: a phone
+                # with zero existing Patient/User records (a genuinely
+                # brand-new number) never got an OTP row created by
+                # request_patient_otp (nothing to attach it to), so this
+                # used to 401 "Invalid or expired code" unconditionally,
+                # even for the correct static demo code — "any valid
+                # phone number" could never actually complete login here.
+                # Fixed by accepting the dev/staging static code for any
+                # phone and provisioning the account inline, instead of
+                # requiring a pre-existing record.
+                if settings.otp_static_code is None or code != settings.otp_static_code:
+                    raise invalid_error
+                user = await self._provision_patient_from_phone(session, tenant_id=tenant_id, phone=phone)
+                return await self._issue_tokens(session, user, device_label, ip_address, user_agent)
+
+            # The static demo code also short-circuits a *returning*
+            # patient's login (no OTP row required) — convenient for
+            # repeated manual/E2E testing against the same seeded phone
+            # number, same opt-in safety story as everywhere else
+            # otp_static_code is checked.
+            if settings.otp_static_code is not None and code == settings.otp_static_code:
+                return await self._issue_tokens(session, user, device_label, ip_address, user_agent)
 
             otp_repo = OtpRepository(session)
             otp = await otp_repo.get_latest_active(user_id=user.id)

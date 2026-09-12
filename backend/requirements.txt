@@ -13,3 +13,4 @@ psycopg2-binary==2.9.10
 tzdata==2024.2
 fpdf2==2.8.2
 boto3==1.35.74
+httpx==0.28.1

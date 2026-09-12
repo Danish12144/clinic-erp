@@ -1,10 +1,10 @@
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.appointments.models import Appointment, AppointmentStatus
+from app.modules.appointments.models import Appointment, AppointmentPaymentStatus, AppointmentStatus
 
 _INACTIVE_STATUSES = (AppointmentStatus.CANCELLED, AppointmentStatus.NO_SHOW)
 
@@ -12,6 +12,20 @@ _INACTIVE_STATUSES = (AppointmentStatus.CANCELLED, AppointmentStatus.NO_SHOW)
 class AppointmentRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
+
+    async def lock_doctor_for_booking(self, doctor_id: uuid.UUID) -> None:
+        """Phase 2 (Master Handoff item 1, "prevent double-booking on
+        concurrent requests") — a transaction-scoped Postgres advisory
+        lock, same mechanism/precedent as `QueueTokenRepository.issue`'s
+        branch-keyed lock. Without this, two concurrent requests for the
+        same doctor+slot can both pass `has_overlap`'s read before either
+        has inserted its row, and both succeed — a real race the plain
+        "check then insert" pattern below can't close on its own. Must be
+        called (and awaited) before `has_overlap`/`create` in the same
+        transaction; releases itself automatically on commit/rollback."""
+        await self._session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"), {"key": f"appointment_doctor:{doctor_id}"}
+        )
 
     async def create(
         self,
@@ -25,6 +39,7 @@ class AppointmentRepository:
         duration_minutes: int,
         notes: str | None,
         status: AppointmentStatus | None = None,
+        payment_status: AppointmentPaymentStatus | None = None,
     ) -> Appointment:
         appointment = Appointment(
             tenant_id=tenant_id,
@@ -38,6 +53,8 @@ class AppointmentRepository:
         )
         if status is not None:
             appointment.status = status
+        if payment_status is not None:
+            appointment.payment_status = payment_status
         self._session.add(appointment)
         await self._session.flush()
         return appointment
@@ -45,6 +62,13 @@ class AppointmentRepository:
     async def get_by_id(self, appointment_id: uuid.UUID) -> Appointment | None:
         result = await self._session.execute(select(Appointment).where(Appointment.id == appointment_id))
         return result.scalar_one_or_none()
+
+    async def set_payment_status(self, appointment_id: uuid.UUID, *, payment_status: AppointmentPaymentStatus) -> None:
+        await self._session.execute(
+            update(Appointment).where(Appointment.id == appointment_id).values(
+                payment_status=payment_status, updated_at=datetime.now(timezone.utc)
+            )
+        )
 
     async def has_overlap(
         self, *, doctor_id: uuid.UUID, scheduled_at: datetime, duration_minutes: int, exclude_appointment_id: uuid.UUID | None = None
@@ -114,7 +138,7 @@ class AppointmentRepository:
             update(Appointment).where(Appointment.id == appointment_id).values(status=status, updated_at=datetime.now(timezone.utc))
         )
 
-    async def cancel(self, appointment_id: uuid.UUID, *, reason: str, cancelled_by: uuid.UUID) -> None:
+    async def cancel(self, appointment_id: uuid.UUID, *, reason: str, cancelled_by: uuid.UUID | None) -> None:
         now = datetime.now(timezone.utc)
         await self._session.execute(
             update(Appointment)

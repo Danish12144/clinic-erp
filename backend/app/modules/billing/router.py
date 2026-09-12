@@ -26,7 +26,7 @@ matches it first, same reasoning as Appointments' `/me` routes.
 
 import uuid
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, Request, status
 from fastapi.responses import Response
 
 from app.api.deps import CurrentUser, require_any_permission, require_permission
@@ -46,9 +46,11 @@ from app.modules.billing.schemas import (
     PaymentSummary,
 )
 from app.modules.billing.service import BillingService, PaymentService
+from app.modules.billing.webhook_service import PaymentGatewayWebhookService
 
 invoice_router = APIRouter(prefix="/api/v1/billing/invoices", tags=["billing:invoices"])
 payment_router = APIRouter(prefix="/api/v1/billing/payments", tags=["billing:payments"])
+webhook_router = APIRouter(prefix="/api/v1/billing/webhooks", tags=["billing:webhooks"])
 
 _READ_PERMS = ("billing.manage", "billing.view_own", "billing.view")
 
@@ -239,3 +241,25 @@ async def search_payments(
     service: PaymentService = Depends(get_payment_service),
 ) -> PaymentListResponse:
     return await service.search_payments(tenant_id=current_user.tenant_id, invoice_id=invoice_id, limit=limit, offset=offset)
+
+
+# ---- Payment gateway webhooks ---------------------------------------------------
+
+
+def get_webhook_service() -> PaymentGatewayWebhookService:
+    return PaymentGatewayWebhookService()
+
+
+@webhook_router.post("/razorpay", status_code=status.HTTP_200_OK)
+async def razorpay_webhook(request: Request, service: PaymentGatewayWebhookService = Depends(get_webhook_service)) -> dict[str, str]:
+    """Phase 2 (Master Handoff item 4) — no auth dependency at all, by
+    design: Razorpay calls this directly with no JWT, authenticating
+    itself only via the `X-Razorpay-Signature` HMAC header, verified
+    against the raw request body inside the service (see
+    `verify_razorpay_webhook_signature`'s own docstring for why it must be
+    the raw bytes, not a re-parsed body)."""
+    raw_body = await request.body()
+    signature = request.headers.get("x-razorpay-signature")
+    payload = await request.json()
+    await service.process_razorpay_webhook(raw_body=raw_body, signature=signature, payload=payload)
+    return {"status": "ok"}
