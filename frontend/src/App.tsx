@@ -136,7 +136,7 @@ export default function App() {
                 <Route
                   path="/billing"
                   element={
-                    <RequirePermission permission={['billing.manage', 'billing.view_own']}>
+                    <RequirePermission permission={['billing.manage', 'billing.view_own', 'billing.view']}>
                       <BillingPage />
                     </RequirePermission>
                   }
@@ -144,7 +144,7 @@ export default function App() {
                 <Route
                   path="/billing/:invoiceId"
                   element={
-                    <RequirePermission permission={['billing.manage', 'billing.view_own']}>
+                    <RequirePermission permission={['billing.manage', 'billing.view_own', 'billing.view']}>
                       <InvoiceDetailPage />
                     </RequirePermission>
                   }
@@ -168,7 +168,7 @@ export default function App() {
                 <Route
                   path="/expenses"
                   element={
-                    <RequirePermission permission={['expenses.manage', 'expenses.record']}>
+                    <RequirePermission permission={['expenses.manage', 'expenses.record', 'expenses.view']}>
                       <ExpensesPage />
                     </RequirePermission>
                   }

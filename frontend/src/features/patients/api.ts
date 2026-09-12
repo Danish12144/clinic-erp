@@ -5,6 +5,7 @@ import type {
   PatientListResponse,
   PatientSearchParams,
   PatientSummary,
+  PatientUpdateRequest,
 } from '@/features/patients/types'
 
 export async function getPatient(patientId: string): Promise<PatientSummary> {
@@ -35,5 +36,10 @@ export async function searchPatients(params: PatientSearchParams): Promise<Patie
 
 export async function createPatient(payload: PatientCreateRequest): Promise<PatientCreateResponse> {
   const { data } = await apiClient.post<PatientCreateResponse>('/patients', payload)
+  return data
+}
+
+export async function updatePatient(patientId: string, payload: PatientUpdateRequest): Promise<PatientSummary> {
+  const { data } = await apiClient.patch<PatientSummary>(`/patients/${patientId}`, payload)
   return data
 }

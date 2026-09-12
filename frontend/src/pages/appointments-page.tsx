@@ -72,7 +72,11 @@ export function AppointmentsPage() {
   const branchSelectItems = useMemo(() => Object.fromEntries((branches ?? []).map((b) => [b.id, b.name])), [branches])
 
   const dayHours = selectedDoctor ? dayHoursFor(selectedDoctor.workingHours, selectedDate) : null
-  const slots = dayHours ? generateTimeSlots(dayHours.open, dayHours.close, SLOT_INCREMENT_MINUTES) : []
+  // Phase 1 (migration 0033) — each doctor now configures their own slot
+  // grid increment (Staff Directory -> Edit schedule); falls back to the
+  // previous hardcoded 15-minute default when no doctor is selected yet.
+  const slotDurationMinutes = selectedDoctor?.slotDurationMinutes ?? SLOT_INCREMENT_MINUTES
+  const slots = dayHours ? generateTimeSlots(dayHours.open, dayHours.close, slotDurationMinutes) : []
 
   const { data: appointmentsData, isLoading: appointmentsLoading } = useAppointmentSearch({
     doctorId: doctorId || undefined,
@@ -97,7 +101,7 @@ export function AppointmentsPage() {
 
   function appointmentForSlot(slot: TimeSlot): AppointmentSummary | undefined {
     const slotStart = slotToDate(selectedDate, slot.minutesFromMidnight).getTime()
-    const slotEnd = slotStart + SLOT_INCREMENT_MINUTES * 60_000
+    const slotEnd = slotStart + slotDurationMinutes * 60_000
     return appointments.find((a) => {
       const apptStart = new Date(a.scheduled_at).getTime()
       const apptEnd = apptStart + a.duration_minutes * 60_000

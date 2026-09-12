@@ -51,6 +51,7 @@ def _to_summary(user, profile: DoctorProfile, branch_ids: list[uuid.UUID]) -> Do
         registration_number=profile.registration_number,
         consultation_fee=profile.consultation_fee,
         working_hours=profile.working_hours,
+        slot_duration_minutes=profile.slot_duration_minutes,
         bio=profile.bio,
         branch_ids=branch_ids,
         created_at=profile.created_at,
@@ -94,6 +95,7 @@ class DoctorService:
                 registration_number=payload.registration_number,
                 consultation_fee=payload.consultation_fee,
                 working_hours=payload.working_hours.model_dump(exclude_none=True),
+                slot_duration_minutes=payload.slot_duration_minutes,
                 bio=payload.bio,
             )
 
@@ -193,6 +195,7 @@ class DoctorService:
                         specialization=profile.specialization,
                         consultation_fee=profile.consultation_fee,
                         working_hours=profile.working_hours,
+                        slot_duration_minutes=profile.slot_duration_minutes,
                         branch_ids=branch_ids,
                     )
                 )

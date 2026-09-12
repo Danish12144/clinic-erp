@@ -1220,13 +1220,20 @@ BEGIN
   END LOOP;
 END $$;
 
--- 15b. Append-only enforcement — the three tables with an explicit
--- "preserve history, never overwrite" product requirement.
+-- 15b. Append-only enforcement — the four tables with an explicit
+-- "preserve history, never overwrite" product requirement. `payments`
+-- joined this list in migration 0031 (Phase 1 of the Clinic ERP / Clinic
+-- OS Master Handoff roadmap) — a financial ledger deserves the same
+-- DB-level guarantee as a clinical reading, not just an app-layer
+-- convention that PaymentRepository simply never exposed an update/delete
+-- method.
 CREATE TRIGGER trg_vitals_immutable BEFORE UPDATE OR DELETE ON vitals
   FOR EACH ROW EXECUTE FUNCTION prevent_update_delete();
 CREATE TRIGGER trg_prescriptions_immutable BEFORE UPDATE OR DELETE ON prescriptions
   FOR EACH ROW EXECUTE FUNCTION prevent_update_delete();
 CREATE TRIGGER trg_audit_logs_immutable BEFORE UPDATE OR DELETE ON audit_logs
+  FOR EACH ROW EXECUTE FUNCTION prevent_update_delete();
+CREATE TRIGGER trg_payments_immutable BEFORE UPDATE OR DELETE ON payments
   FOR EACH ROW EXECUTE FUNCTION prevent_update_delete();
 
 
@@ -1322,6 +1329,7 @@ INSERT INTO permissions (code, module, description) VALUES
   ('prescription.view',           'clinical',      'View prescriptions — Doctor scoped to own, Owner/Nurse/Pharmacy Staff tenant-wide, Patient scoped to their own encounters (migrations 0026, 0028)'),
   ('billing.manage',              'billing',       'Create/edit invoices'),
   ('billing.view_own',            'billing',       'Patient views own invoices'),
+  ('billing.view',                'billing',       'View invoices and payments tenant-wide, read-only — for a finance/accounts user, granted per-user via permission_overrides, not a role default (migration 0032)'),
   ('payments.record',             'billing',       'Record payments against an invoice'),
   ('pharmacy.manage_catalog',     'pharmacy',       'Manage medicine catalog and stock'),
   ('pharmacy.view_catalog',       'pharmacy',       'View medicine catalog and batch stock levels — read-only'),
@@ -1336,6 +1344,7 @@ INSERT INTO permissions (code, module, description) VALUES
   ('inventory.record_usage',      'inventory',      'Read general inventory items/alerts and log USAGE transactions only — PURCHASE/ADJUSTMENT/RETURN remain inventory.manage-only'),
   ('expenses.manage',             'finance',        'Record and manage expenses'),
   ('expenses.record',             'finance',        'Record and view expenses (no edit) — petty-cash logging. Receptionist only, a deliberate PRD §3 matrix deviation (matrix says Receptionist "–" on general inventory & expenses)'),
+  ('expenses.view',               'finance',        'View expenses tenant-wide, read-only, no create/edit — for a finance/accounts user, granted per-user via permission_overrides, not a role default (migration 0032)'),
   ('crm.manage',                  'crm',            'Manage clinical follow-ups (not leads — see leads.manage/leads.view, migration 0023, kept deliberately separate)'),
   ('leads.manage',                'crm',            'Full CRUD on leads, log interactions, and convert a lead to a patient — Owner/Receptionist'),
   ('leads.view',                  'crm',            'Read-only access to leads and their interaction history — Doctor'),

@@ -1,8 +1,8 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { createPatient, getMyPatient, getPatient, searchPatients } from '@/features/patients/api'
+import { createPatient, getMyPatient, getPatient, searchPatients, updatePatient } from '@/features/patients/api'
 import { classifyPatientSearchTerm } from '@/features/patients/search-classifier'
 import { useDebouncedValue } from '@/lib/use-debounced-value'
-import type { PatientCreateRequest } from '@/features/patients/types'
+import type { PatientCreateRequest, PatientUpdateRequest } from '@/features/patients/types'
 
 export function usePatient(patientId: string | undefined) {
   return useQuery({
@@ -37,6 +37,17 @@ export function useCreatePatient() {
     mutationFn: (payload: PatientCreateRequest) => createPatient(payload),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['patients', 'search'] })
+    },
+  })
+}
+
+export function useUpdatePatient() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ patientId, payload }: { patientId: string; payload: PatientUpdateRequest }) => updatePatient(patientId, payload),
+    onSuccess: (updated) => {
+      void queryClient.invalidateQueries({ queryKey: ['patients', 'search'] })
+      queryClient.setQueryData(['patients', 'get', updated.id], updated)
     },
   })
 }

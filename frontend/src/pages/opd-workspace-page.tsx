@@ -10,6 +10,7 @@ import { LabOrderPanel } from '@/components/opd/lab-order-panel'
 import { PrescriptionPreviewDialog } from '@/components/opd/prescription-preview-dialog'
 import { RxTable } from '@/components/opd/rx-table'
 import { VitalsPanel } from '@/components/opd/vitals-panel'
+import { AllergyBanner } from '@/components/shared/allergy-banner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -164,6 +165,8 @@ function ConsultationPad({
         </div>
         <Badge variant="secondary">Consultation in progress</Badge>
       </div>
+
+      <AllergyBanner allergies={patient.allergies} chronicConditions={patient.chronic_conditions} />
 
       <VitalsPanel encounterId={encounterId} />
 

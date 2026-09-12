@@ -34,6 +34,19 @@ class PatientRepository:
         await self._session.flush()
         return patient
 
+    async def get_many_by_ids(self, patient_ids: list[uuid.UUID]) -> list[Patient]:
+        """Batch variant of get_by_id — for a caller resolving several ids
+        to display names at once (e.g. Billing's CSV export labeling each
+        invoice's patient) rather than looping get_by_id per row. Includes
+        soft-deleted patients (an old invoice for a since-deleted patient
+        should still show a real name, not silently drop it from a report).
+        Returns nothing for an empty input rather than issuing a pointless
+        `WHERE id IN ()` query."""
+        if not patient_ids:
+            return []
+        result = await self._session.execute(select(Patient).where(Patient.id.in_(set(patient_ids))))
+        return list(result.scalars().all())
+
     async def get_by_id(self, patient_id: uuid.UUID, *, include_deleted: bool = False) -> Patient | None:
         query = select(Patient).where(Patient.id == patient_id)
         if not include_deleted:

@@ -1,9 +1,12 @@
 import { apiClient } from '@/lib/api-client'
 import type {
+  BranchAssignmentRequest,
   DoctorCreateRequest,
   DoctorCreateResponse,
   DoctorDirectoryResponse,
   DoctorListResponse,
+  DoctorSummary,
+  DoctorUpdateRequest,
 } from '@/features/doctors/types'
 
 // Read-only, PII-minimal listing — only ACTIVE doctors, gated by
@@ -25,5 +28,15 @@ export async function listDoctors(params: { q?: string; includeInactive?: boolea
 
 export async function createDoctor(payload: DoctorCreateRequest): Promise<DoctorCreateResponse> {
   const { data } = await apiClient.post<DoctorCreateResponse>('/doctors', payload)
+  return data
+}
+
+export async function updateDoctor(userId: string, payload: DoctorUpdateRequest): Promise<DoctorSummary> {
+  const { data } = await apiClient.patch<DoctorSummary>(`/doctors/${userId}`, payload)
+  return data
+}
+
+export async function setDoctorBranches(userId: string, payload: BranchAssignmentRequest): Promise<DoctorSummary> {
+  const { data } = await apiClient.put<DoctorSummary>(`/doctors/${userId}/branches`, payload)
   return data
 }

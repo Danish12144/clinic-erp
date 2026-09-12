@@ -40,6 +40,11 @@ class DoctorCreateRequest(BaseModel):
     registration_number: str | None = Field(None, max_length=100)
     consultation_fee: Decimal | None = Field(None, ge=0, max_digits=10, decimal_places=2)
     working_hours: WorkingHours = Field(default_factory=_default_doctor_working_hours)
+    # Phase 1 (migration 0033) — matches doctor_profiles' own DB CHECK
+    # (5-240) and the frontend Appointments page's existing 5-240 range for
+    # a single appointment's duration_minutes, so the two concepts share
+    # one sensible bound even though they're otherwise independent.
+    slot_duration_minutes: int = Field(15, ge=5, le=240)
     bio: str | None = Field(None, max_length=2000)
     branch_ids: list[uuid.UUID] = Field(default_factory=list)
 
@@ -68,6 +73,7 @@ class DoctorUpdateRequest(BaseModel):
     registration_number: str | None = Field(None, max_length=100)
     consultation_fee: Decimal | None = Field(None, ge=0, max_digits=10, decimal_places=2)
     working_hours: WorkingHours | None = None
+    slot_duration_minutes: int | None = Field(None, ge=5, le=240)
     bio: str | None = Field(None, max_length=2000)
 
     @model_validator(mode="after")
@@ -91,6 +97,7 @@ class DoctorSummary(BaseModel):
     registration_number: str | None
     consultation_fee: Decimal | None
     working_hours: dict
+    slot_duration_minutes: int
     bio: str | None
     branch_ids: list[uuid.UUID]
     created_at: datetime
@@ -128,6 +135,7 @@ class DoctorDirectoryEntry(BaseModel):
     specialization: str | None
     consultation_fee: Decimal | None
     working_hours: dict
+    slot_duration_minutes: int
     branch_ids: list[uuid.UUID]
 
 

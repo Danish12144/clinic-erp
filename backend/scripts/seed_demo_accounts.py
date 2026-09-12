@@ -66,13 +66,25 @@ from sqlalchemy import select
 
 from app.core.db import platform_admin_session
 from app.core.security import hash_password
-from app.modules.auth.models import Role, User, UserStatus
+from app.modules.auth.models import Permission, PermissionOverride, Role, User, UserStatus
 from app.modules.doctors.models import DoctorProfile
 from app.modules.doctors.repository import BranchAssignmentRepository
 from app.modules.tenancy.models import Branch, Clinic, ClinicStatus
 
 CLINIC_SLUG = "my-clinic"
 CLINIC_NAME = "My Clinic"
+
+# Phase 1 (Master Handoff item 4, "Accountant permission bundle") — this
+# demo tenant's one finance/accounts persona (mapped onto OTHER_STAFF,
+# same role-name-collapse this script's own docstring already explains
+# for PHARMACIST/STORE_MANAGER) gets these three permissions as per-user
+# `permission_overrides`, not a role-wide grant — exactly the mechanism
+# migration 0032's docstring describes ("Applying the bundle to a real
+# person is what permission_overrides is for"). `billing.view`/
+# `expenses.view` are new in migration 0032; `dashboard.view` already
+# existed (migration 0015) but OTHER_STAFF never held it by default.
+ACCOUNTANT_EMAIL = "accounts.myclinic@gmail.com"
+ACCOUNTANT_PERMISSION_CODES = ("billing.view", "expenses.view", "dashboard.view")
 
 # Doctors fail-closed with no working_hours (every day parses to "closed"),
 # and invoice auto-generate 422s with no consultation_fee — see this
@@ -171,6 +183,30 @@ async def seed() -> None:
                     tenant_id=clinic.id, user_id=user.id, branch_ids=[*existing_branch_ids, branch.id]
                 )
                 print(f"           + assigned to branch '{branch.name}'")
+
+            if email == ACCOUNTANT_EMAIL:
+                for code in ACCOUNTANT_PERMISSION_CODES:
+                    permission = (await session.execute(select(Permission).where(Permission.code == code))).scalar_one_or_none()
+                    if permission is None:
+                        print(f"           ! permission '{code}' not found - has `alembic upgrade head` run?", file=sys.stderr)
+                        continue
+                    override = (
+                        await session.execute(
+                            select(PermissionOverride).where(
+                                PermissionOverride.tenant_id == clinic.id,
+                                PermissionOverride.user_id == user.id,
+                                PermissionOverride.permission_id == permission.id,
+                            )
+                        )
+                    ).scalar_one_or_none()
+                    if override is None:
+                        session.add(
+                            PermissionOverride(tenant_id=clinic.id, user_id=user.id, permission_id=permission.id, granted=True)
+                        )
+                        print(f"           + granted override '{code}'")
+                    elif not override.granted:
+                        override.granted = True
+                        print(f"           + re-granted override '{code}'")
         # Transaction commits on clean exit of the `async with` block.
 
     print(f'\nDone. Log in at POST /api/v1/auth/staff/login with {{"clinic_slug": "{CLINIC_SLUG}", "identifier": "<email>", "password": "<password>"}}')

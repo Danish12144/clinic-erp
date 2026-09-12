@@ -1,6 +1,7 @@
 import { FileText, Pill, Stethoscope } from 'lucide-react'
 import { useState } from 'react'
 import { PrescriptionPreviewDialog } from '@/components/opd/prescription-preview-dialog'
+import { AllergyBanner } from '@/components/shared/allergy-banner'
 import { EmptyState } from '@/components/shared/empty-state'
 import { StatusBadge } from '@/components/shared/status-badge'
 import { Button } from '@/components/ui/button'
@@ -35,6 +36,8 @@ export function PortalMedicalRecordsPage() {
         <h1 className="text-xl font-semibold text-slate-900 dark:text-slate-50">Medical records</h1>
         <p className="text-sm text-slate-500 dark:text-slate-400">Your visit history, prescriptions, and vitals.</p>
       </div>
+
+      {patient && <AllergyBanner allergies={patient.allergies} chronicConditions={patient.chronic_conditions} />}
 
       <Card>
         <CardHeader>

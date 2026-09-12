@@ -1,5 +1,6 @@
-import { Loader2, Search, UserPlus, UserRoundSearch } from 'lucide-react'
+import { Loader2, Pencil, Search, UserPlus, UserRoundSearch } from 'lucide-react'
 import { useState } from 'react'
+import { EditPatientDialog } from '@/components/patients/edit-patient-dialog'
 import { NewPatientDialog } from '@/components/patients/new-patient-dialog'
 import { EmptyState } from '@/components/shared/empty-state'
 import { Badge } from '@/components/ui/badge'
@@ -9,6 +10,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { useAuth } from '@/features/auth/auth-context'
 import { usePatientSearch } from '@/features/patients/hooks'
+import type { PatientSummary } from '@/features/patients/types'
 
 function formatAge(dateOfBirth: string | null): string {
   if (!dateOfBirth) return '—'
@@ -20,7 +22,9 @@ export function PatientsPage() {
   const { hasPermission } = useAuth()
   const [searchTerm, setSearchTerm] = useState('')
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [editingPatient, setEditingPatient] = useState<PatientSummary | null>(null)
   const { data, isLoading, isFetching } = usePatientSearch(searchTerm)
+  const canEdit = hasPermission('patients.register')
 
   return (
     <div className="flex flex-col gap-4 p-4 sm:p-6">
@@ -59,13 +63,14 @@ export function PatientsPage() {
               <TableHead>Age / Gender</TableHead>
               <TableHead>Phone</TableHead>
               <TableHead>Email</TableHead>
+              {canEdit && <TableHead className="text-right">Actions</TableHead>}
             </TableRow>
           </TableHeader>
           <TableBody>
             {isLoading &&
               Array.from({ length: 5 }).map((_, i) => (
                 <TableRow key={i}>
-                  {Array.from({ length: 5 }).map((__, j) => (
+                  {Array.from({ length: canEdit ? 6 : 5 }).map((__, j) => (
                     <TableCell key={j}>
                       <Skeleton className="h-4 w-full max-w-32" />
                     </TableCell>
@@ -75,7 +80,7 @@ export function PatientsPage() {
 
             {!isLoading && data?.items.length === 0 && (
               <TableRow className="hover:bg-transparent">
-                <TableCell colSpan={5}>
+                <TableCell colSpan={canEdit ? 6 : 5}>
                   <EmptyState
                     icon={UserRoundSearch}
                     title="No patients found"
@@ -102,6 +107,14 @@ export function PatientsPage() {
                   </TableCell>
                   <TableCell className="text-slate-600 dark:text-slate-400">{patient.phone ?? '—'}</TableCell>
                   <TableCell className="text-slate-600 dark:text-slate-400">{patient.email ?? '—'}</TableCell>
+                  {canEdit && (
+                    <TableCell className="text-right">
+                      <Button variant="ghost" size="sm" className="gap-1.5" onClick={() => setEditingPatient(patient)}>
+                        <Pencil className="size-4" />
+                        Edit
+                      </Button>
+                    </TableCell>
+                  )}
                 </TableRow>
               ))}
           </TableBody>
@@ -115,6 +128,13 @@ export function PatientsPage() {
       )}
 
       <NewPatientDialog open={dialogOpen} onOpenChange={setDialogOpen} />
+      <EditPatientDialog
+        patient={editingPatient}
+        open={editingPatient !== null}
+        onOpenChange={(next) => {
+          if (!next) setEditingPatient(null)
+        }}
+      />
     </div>
   )
 }

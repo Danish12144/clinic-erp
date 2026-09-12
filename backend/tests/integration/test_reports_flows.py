@@ -240,3 +240,23 @@ async def test_today_period_includes_data_created_today(api_client: AsyncClient,
     response = await api_client.get("/api/v1/reports/financial?period=today", headers=owner_headers)
     assert response.status_code == 200
     assert float(response.json()["total_billed"]) >= 500.0
+
+
+async def test_export_financial_report_csv(api_client: AsyncClient, owner_headers: dict[str, str], test_clinic: Clinic) -> None:
+    """Phase 1 (Master Handoff item 6, "Basic reports & billing export")."""
+    branch_id = await _create_branch(api_client, owner_headers, "ExportReportBranch")
+    invoice_id, _, _ = await _billed_encounter(api_client, owner_headers, test_clinic, branch_id=branch_id, doctor_phone="+919879000030", patient_phone="+919879000031", fee=500)
+    await _issue_and_pay(api_client, owner_headers, invoice_id=invoice_id, amount=500, method="CASH")
+
+    response = await api_client.get("/api/v1/reports/financial/export", headers=owner_headers)
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/csv")
+    body = response.text
+    assert "Total Billed" in body
+    assert "Revenue By Service Type" in body
+
+
+async def test_export_financial_report_csv_requires_dashboard_permission(api_client: AsyncClient, login_as) -> None:
+    headers, _ = await login_as(role_code="RECEPTIONIST")
+    response = await api_client.get("/api/v1/reports/financial/export", headers=headers)
+    assert response.status_code == 403

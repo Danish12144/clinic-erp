@@ -6,6 +6,13 @@ create/read/update. `expenses.record` (Receptionist, a deliberate matrix
 deviation — see migration 0020's docstring) gates create/read only, never
 update. Doctor and every other role has neither permission at all —
 "Doctor/Staff have zero access" (task 3).
+
+Phase 1 (migration 0032) added `expenses.view` — read-only, for a
+finance/accounts persona granted it via a per-user permission override.
+It is deliberately only in `_READ_PERMS`, not `_CREATE_PERMS`: a view-only
+grant must never also unlock creating an expense, which is why the GET
+routes and the POST route now check two different tuples instead of the
+one shared `_READ_WRITE_PERMS` this module used before.
 """
 
 import uuid
@@ -25,7 +32,8 @@ from app.modules.expenses.service import ExpenseService
 
 router = APIRouter(prefix="/api/v1/expenses", tags=["expenses"])
 
-_READ_WRITE_PERMS = ("expenses.manage", "expenses.record")
+_CREATE_PERMS = ("expenses.manage", "expenses.record")
+_READ_PERMS = ("expenses.manage", "expenses.record", "expenses.view")
 
 
 def get_expense_service() -> ExpenseService:
@@ -35,7 +43,7 @@ def get_expense_service() -> ExpenseService:
 @router.post("", response_model=ExpenseSummary, status_code=status.HTTP_201_CREATED)
 async def create_expense(
     payload: ExpenseCreateRequest,
-    current_user: CurrentUser = Depends(require_any_permission(*_READ_WRITE_PERMS)),
+    current_user: CurrentUser = Depends(require_any_permission(*_CREATE_PERMS)),
     service: ExpenseService = Depends(get_expense_service),
 ) -> ExpenseSummary:
     return await service.create_expense(tenant_id=current_user.tenant_id, payload=payload, actor_user_id=current_user.user_id, actor_role=current_user.role_code)
@@ -50,7 +58,7 @@ async def search_expenses(
     date_to: date | None = Query(None),
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
-    current_user: CurrentUser = Depends(require_any_permission(*_READ_WRITE_PERMS)),
+    current_user: CurrentUser = Depends(require_any_permission(*_READ_PERMS)),
     service: ExpenseService = Depends(get_expense_service),
 ) -> ExpenseListResponse:
     return await service.search_expenses(
@@ -62,7 +70,7 @@ async def search_expenses(
 @router.get("/{expense_id}", response_model=ExpenseSummary)
 async def get_expense(
     expense_id: uuid.UUID,
-    current_user: CurrentUser = Depends(require_any_permission(*_READ_WRITE_PERMS)),
+    current_user: CurrentUser = Depends(require_any_permission(*_READ_PERMS)),
     service: ExpenseService = Depends(get_expense_service),
 ) -> ExpenseSummary:
     return await service.get_expense(tenant_id=current_user.tenant_id, expense_id=expense_id)

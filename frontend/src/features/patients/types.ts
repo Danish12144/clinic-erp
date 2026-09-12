@@ -37,6 +37,28 @@ export interface PatientCreateRequest {
   date_of_birth?: string | null
   phone?: string | null
   email?: string | null
+  blood_group?: BloodGroup | null
+  allergies?: string[]
+  chronic_conditions?: string[]
+  address?: string | null
+  abha_id?: string | null
+  abha_address?: string | null
+}
+
+// PATCH /patients/{id} (patients.register) — every field optional, mirrors
+// backend/app/modules/patients/schemas.py::PatientUpdateRequest. Omit a
+// field to leave it unchanged; emergency_contact isn't editable from any
+// screen yet, so it's left out here rather than half-wired.
+export interface PatientUpdateRequest {
+  first_name?: string
+  last_name?: string | null
+  gender?: Gender | null
+  date_of_birth?: string | null
+  phone?: string | null
+  email?: string | null
+  blood_group?: BloodGroup | null
+  allergies?: string[]
+  chronic_conditions?: string[]
   address?: string | null
   abha_id?: string | null
   abha_address?: string | null

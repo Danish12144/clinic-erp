@@ -1,6 +1,7 @@
 import { useQueries } from '@tanstack/react-query'
-import { FileText, Plus } from 'lucide-react'
+import { Download, FileText, Plus } from 'lucide-react'
 import { useMemo, useState } from 'react'
+import { toast } from 'sonner'
 import { useNavigate } from 'react-router-dom'
 import { NewInvoiceDialog } from '@/components/billing/new-invoice-dialog'
 import { EmptyState } from '@/components/shared/empty-state'
@@ -11,9 +12,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { useAuth } from '@/features/auth/auth-context'
+import { exportInvoicesCsv } from '@/features/billing/api'
 import { useInvoiceSearch } from '@/features/billing/hooks'
 import { getPatient } from '@/features/patients/api'
 import type { PatientSummary } from '@/features/patients/types'
+import { downloadBlob } from '@/lib/download'
+import { getErrorMessage } from '@/lib/errors'
 
 const STATUS_OPTIONS = ['DRAFT', 'ISSUED', 'PARTIALLY_PAID', 'PAID', 'VOID'] as const
 
@@ -34,6 +38,7 @@ export function BillingPage() {
   const navigate = useNavigate()
   const [statusFilter, setStatusFilter] = useState<string | undefined>(undefined)
   const [newInvoiceOpen, setNewInvoiceOpen] = useState(false)
+  const [exporting, setExporting] = useState(false)
 
   const { data, isLoading } = useInvoiceSearch({ status: statusFilter, limit: 30 })
   const invoices = data?.items ?? []
@@ -59,6 +64,18 @@ export function BillingPage() {
 
   const canCreate = hasPermission('billing.manage')
 
+  async function onExportCsv() {
+    setExporting(true)
+    try {
+      const blob = await exportInvoicesCsv({ status: statusFilter })
+      downloadBlob(blob, 'invoices.csv')
+    } catch (error) {
+      toast.error('Could not export invoices', { description: getErrorMessage(error) })
+    } finally {
+      setExporting(false)
+    }
+  }
+
   return (
     <div className="flex flex-col gap-4 p-4 sm:p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -66,12 +83,18 @@ export function BillingPage() {
           <h1 className="text-xl font-semibold text-slate-900 dark:text-slate-50">Billing</h1>
           <p className="text-sm text-slate-500 dark:text-slate-400">Invoices and payments.</p>
         </div>
-        {canCreate && (
-          <Button className="gap-1.5" onClick={() => setNewInvoiceOpen(true)}>
-            <Plus className="size-4" />
-            New invoice
+        <div className="flex items-center gap-2">
+          <Button variant="outline" className="gap-1.5" onClick={onExportCsv} disabled={exporting}>
+            <Download className="size-4" />
+            {exporting ? 'Exporting…' : 'Export CSV'}
           </Button>
-        )}
+          {canCreate && (
+            <Button className="gap-1.5" onClick={() => setNewInvoiceOpen(true)}>
+              <Plus className="size-4" />
+              New invoice
+            </Button>
+          )}
+        </div>
       </div>
 
       <Select value={statusFilter ?? 'ALL'} onValueChange={(value) => setStatusFilter(value === 'ALL' ? undefined : (value ?? undefined))}>

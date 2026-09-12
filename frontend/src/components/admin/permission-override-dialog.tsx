@@ -44,6 +44,13 @@ const COMMON_PERMISSION_CODES = [
   'pharmacy.sell_otc',
   'inventory.record_usage',
   'expenses.record',
+  // Phase 1 (migration 0032) — the Accountant permission bundle. Granting
+  // these at the role level here (e.g. to OTHER_STAFF) is an alternative
+  // to the per-user override scripts/seed_demo_accounts.py applies to one
+  // named demo account; both go through this same table.
+  'billing.view',
+  'expenses.view',
+  'dashboard.view',
 ]
 
 export function PermissionOverrideDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {

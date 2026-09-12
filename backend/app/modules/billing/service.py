@@ -23,6 +23,8 @@ source_type; it never blocks a different one. This replaces the previous
 one-encounter-one-invoice assumption the PRD's own ER diagram used to show.
 """
 
+import csv
+import io
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -59,6 +61,10 @@ from app.modules.patients.repository import PatientRepository
 from app.modules.tenancy.repository import BranchRepository
 
 _REVERSAL_NOTE = "Automatic reversal for invoice void"
+
+# Phase 1 CSV export cap (see BillingService.export_invoices_csv) — a
+# spreadsheet a person opens and reads, not a bulk data-migration tool.
+_MAX_EXPORT_ROWS = 2000
 
 # DRAFT/ISSUED both mean "nothing collected yet" from a pure payment-status
 # point of view — the DRAFT/ISSUED distinction itself only matters for
@@ -384,6 +390,40 @@ class BillingService:
             )
             names = await _names_for_payments(session, [p for row in rows for p in row.payments])
             return InvoiceListResponse(items=[_to_summary(i, names) for i in rows], total=total, limit=limit, offset=offset)
+
+    async def export_invoices_csv(
+        self, *, tenant_id: uuid.UUID, branch_id: uuid.UUID | None, patient_id: uuid.UUID | None, encounter_id: uuid.UUID | None,
+        status_filter: InvoiceStatus | None, actor_role: str, actor_user_id: uuid.UUID,
+    ) -> str:
+        """Phase 1 (Master Handoff item 6, "Basic reports & billing
+        export") — reuses `search_invoices` itself (same filters, same
+        row-scoping by actor_role/actor_user_id) rather than a parallel
+        query path, so the CSV can never show a row the JSON endpoint
+        wouldn't. Capped at `_MAX_EXPORT_ROWS` rather than truly unbounded —
+        a spreadsheet export is a snapshot for a person to open, not a bulk
+        data-migration tool."""
+        listing = await self.search_invoices(
+            tenant_id=tenant_id, branch_id=branch_id, patient_id=patient_id, encounter_id=encounter_id,
+            status_filter=status_filter, actor_role=actor_role, actor_user_id=actor_user_id,
+            limit=_MAX_EXPORT_ROWS, offset=0,
+        )
+        async with tenant_session(tenant_id) as session:
+            patients = await PatientRepository(session).get_many_by_ids([i.patient_id for i in listing.items])
+        patient_names = {p.id: (" ".join(filter(None, [p.first_name, p.last_name])) or p.mrn) for p in patients}
+
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow([
+            "Invoice ID", "Patient", "Source Type", "Status", "Payment Status", "Subtotal", "Tax", "Discount",
+            "Total", "Paid Amount", "Outstanding Amount", "Created At",
+        ])
+        for invoice in listing.items:
+            writer.writerow([
+                str(invoice.id), patient_names.get(invoice.patient_id, str(invoice.patient_id)), invoice.source_type,
+                invoice.status, invoice.payment_status, invoice.subtotal, invoice.tax, invoice.discount, invoice.total,
+                invoice.paid_amount, invoice.outstanding_amount, invoice.created_at.isoformat(),
+            ])
+        return buffer.getvalue()
 
     async def get_my_invoices(self, *, tenant_id: uuid.UUID, user_id: uuid.UUID, limit: int, offset: int) -> InvoiceListResponse:
         async with tenant_session(tenant_id) as session:

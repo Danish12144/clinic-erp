@@ -41,6 +41,7 @@ class DoctorRepository:
         registration_number: str | None,
         consultation_fee,
         working_hours: dict,
+        slot_duration_minutes: int,
         bio: str | None,
     ) -> DoctorProfile:
         profile = DoctorProfile(
@@ -50,6 +51,7 @@ class DoctorRepository:
             registration_number=registration_number,
             consultation_fee=consultation_fee,
             working_hours=working_hours,
+            slot_duration_minutes=slot_duration_minutes,
             bio=bio,
         )
         self._session.add(profile)

@@ -27,6 +27,7 @@ export interface DoctorDirectoryEntry {
   specialization: string | null
   consultation_fee: string | null
   working_hours: WorkingHours
+  slot_duration_minutes: number
   branch_ids: string[]
 }
 
@@ -49,6 +50,7 @@ export interface DoctorSummary {
   registration_number: string | null
   consultation_fee: string | null
   working_hours: WorkingHours
+  slot_duration_minutes: number
   branch_ids: string[]
   created_at: string
   updated_at: string
@@ -77,6 +79,7 @@ export interface DoctorCreateRequest {
   specialization?: string | null
   registration_number?: string | null
   consultation_fee?: number | null
+  slot_duration_minutes?: number
   bio?: string | null
   branch_ids?: string[]
 }
@@ -84,4 +87,23 @@ export interface DoctorCreateRequest {
 export interface DoctorCreateResponse {
   doctor: DoctorSummary
   invite: InviteInfo
+}
+
+// PATCH /doctors/{user_id} (staff.manage) and PATCH /doctors/me
+// (doctor.manage_own_profile) share this same request shape — see
+// backend/app/modules/doctors/schemas.py::DoctorUpdateRequest. Every field
+// optional; omit a field to leave it unchanged.
+export interface DoctorUpdateRequest {
+  first_name?: string | null
+  last_name?: string | null
+  specialization?: string | null
+  registration_number?: string | null
+  consultation_fee?: number | null
+  working_hours?: WorkingHours | null
+  slot_duration_minutes?: number | null
+  bio?: string | null
+}
+
+export interface BranchAssignmentRequest {
+  branch_ids: string[]
 }

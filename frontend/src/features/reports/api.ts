@@ -20,3 +20,13 @@ export async function getFinancialReport(params: ReportQueryParams): Promise<Fin
   const { data } = await apiClient.get<FinancialReport>('/reports/financial', { params: toQueryParams(params) })
   return data
 }
+
+// Phase 1 (Master Handoff item 6) — same filters as getFinancialReport, a
+// CSV file instead of JSON.
+export async function exportFinancialReportCsv(params: ReportQueryParams): Promise<Blob> {
+  const { data } = await apiClient.get<Blob>('/reports/financial/export', {
+    params: toQueryParams(params),
+    responseType: 'blob',
+  })
+  return data
+}

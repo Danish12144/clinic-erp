@@ -13,6 +13,7 @@ import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, Query
+from fastapi.responses import Response
 
 from app.api.deps import CurrentUser, require_any_permission
 from app.modules.reports.schemas import BillingSummary, FinancialReport, ReportPeriod
@@ -57,4 +58,26 @@ async def get_financial_report(
     return await service.get_financial_report(
         tenant_id=current_user.tenant_id, period=period, date_from=date_from, date_to=date_to,
         branch_id=branch_id, doctor_id=doctor_id, actor_role=current_user.role_code, actor_user_id=current_user.user_id,
+    )
+
+
+@financial_report_router.get("/financial/export", response_class=Response)
+async def export_financial_report_csv(
+    period: ReportPeriod = Query(ReportPeriod.ALL_TIME),
+    date_from: datetime | None = Query(None),
+    date_to: datetime | None = Query(None),
+    branch_id: uuid.UUID | None = Query(None),
+    doctor_id: uuid.UUID | None = Query(None),
+    current_user: CurrentUser = Depends(require_any_permission(*_DASHBOARD_PERMS)),
+    service: ReportsService = Depends(get_reports_service),
+) -> Response:
+    """Phase 1 (Master Handoff item 6) — same filters and row-scoping as
+    `get_financial_report`, serialized as a CSV file instead of JSON."""
+    csv_body = await service.export_financial_report_csv(
+        tenant_id=current_user.tenant_id, period=period, date_from=date_from, date_to=date_to,
+        branch_id=branch_id, doctor_id=doctor_id, actor_role=current_user.role_code, actor_user_id=current_user.user_id,
+    )
+    return Response(
+        content=csv_body, media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=financial-report.csv"},
     )

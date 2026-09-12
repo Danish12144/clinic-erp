@@ -40,6 +40,8 @@ export const patientFormSchema = z
     phone: z.string().regex(PHONE_PATTERN, 'Enter a valid phone number').optional().or(z.literal('')),
     email: z.string().email('Enter a valid email address').optional().or(z.literal('')),
     address: z.string().max(500).optional().or(z.literal('')),
+    allergies: z.string().optional().or(z.literal('')),
+    chronicConditions: z.string().optional().or(z.literal('')),
     abhaId: z.string().max(20).optional().or(z.literal('')),
     abhaAddress: z.string().max(100).optional().or(z.literal('')),
     checkInNow: z.boolean(),
@@ -66,6 +68,8 @@ const DEFAULT_VALUES: PatientFormValues = {
   phone: '',
   email: '',
   address: '',
+  allergies: '',
+  chronicConditions: '',
   abhaId: '',
   abhaAddress: '',
   checkInNow: true,
@@ -83,6 +87,22 @@ export function resolveDateOfBirth(values: PatientFormValues): string | undefine
     return `${birthYear}-01-01`
   }
   return undefined
+}
+
+// Both allergies and chronic_conditions are backend string[] fields — the
+// form collects them as one comma-separated text input for speed of entry
+// (matching how a receptionist would actually be told these by a patient),
+// split/trimmed/de-blanked here rather than building a full tag-input
+// widget for a field this simple.
+export function splitCommaList(value: string): string[] {
+  return value
+    .split(',')
+    .map((v) => v.trim())
+    .filter(Boolean)
+}
+
+export function joinCommaList(values: string[]): string {
+  return values.join(', ')
 }
 
 export function NewPatientDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
@@ -131,6 +151,8 @@ export function NewPatientDialog({ open, onOpenChange }: { open: boolean; onOpen
         phone: values.phone || undefined,
         email: values.email || undefined,
         address: values.address || undefined,
+        allergies: values.allergies ? splitCommaList(values.allergies) : undefined,
+        chronic_conditions: values.chronicConditions ? splitCommaList(values.chronicConditions) : undefined,
         abha_id: values.abhaId || undefined,
         abha_address: values.abhaAddress || undefined,
       })
@@ -236,6 +258,19 @@ export function NewPatientDialog({ open, onOpenChange }: { open: boolean; onOpen
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="address">Address</Label>
             <Textarea id="address" rows={2} {...register('address')} />
+          </div>
+
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="allergies">Allergies</Label>
+              <Input id="allergies" placeholder="e.g. Penicillin, Peanuts" {...register('allergies')} />
+              <p className="text-xs text-muted-foreground">Comma-separated. Shown as a red alert during consultation.</p>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="chronicConditions">Chronic conditions</Label>
+              <Input id="chronicConditions" placeholder="e.g. Diabetes, Hypertension" {...register('chronicConditions')} />
+              <p className="text-xs text-muted-foreground">Comma-separated.</p>
+            </div>
           </div>
 
           <details className="rounded-md border border-border p-3 text-sm">

@@ -7,10 +7,14 @@ updated_at`, `payments.notes`).
 `Invoice.status` is always *derived* from its `Payment` rows once ISSUED
 (never set directly by the app, matching the master schema's own
 invariant) — see `BillingService._recompute_status`. Line items are only
-mutable while `DRAFT`; issuing locks them. `Payment` is insert-mostly by
-convention, not DB-enforced append-only like `Vitals`/`Prescription` — a
-refund is a new negative-amount row, never an edit; there's no update/
-delete method for it in this module's repository either way.
+mutable while `DRAFT`; issuing locks them. `Payment` is DB-enforced
+append-only as of migration 0031 (Phase 1 production-safety hardening) —
+same `prevent_update_delete()` trigger as `Vitals`/`Prescription`/
+`audit_logs`, plus a `REVOKE UPDATE, DELETE ... FROM app_user`. A refund
+is a new negative-amount row, never an edit; there was never an update/
+delete method for it in this module's repository either way, so no
+application code changed — only the database now enforces what the app
+already only ever did.
 """
 
 import uuid

@@ -1,14 +1,15 @@
 import { useMemo } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { createDoctor, listDoctorDirectory, listDoctors } from '@/features/doctors/api'
+import { createDoctor, listDoctorDirectory, listDoctors, setDoctorBranches, updateDoctor } from '@/features/doctors/api'
 import { useAuth } from '@/features/auth/auth-context'
-import type { DoctorCreateRequest, WorkingHours } from '@/features/doctors/types'
+import type { BranchAssignmentRequest, DoctorCreateRequest, DoctorUpdateRequest, WorkingHours } from '@/features/doctors/types'
 
 export interface BookableDoctor {
   userId: string
   name: string
   specialization: string | null
   workingHours: WorkingHours
+  slotDurationMinutes: number
   branchIds: string[]
 }
 
@@ -33,6 +34,7 @@ export function useBookableDoctors() {
         name: [d.first_name, d.last_name].filter(Boolean).join(' ') || 'Unnamed doctor',
         specialization: d.specialization,
         workingHours: d.working_hours,
+        slotDurationMinutes: d.slot_duration_minutes,
         branchIds: d.branch_ids,
       }))
     }
@@ -44,6 +46,7 @@ export function useBookableDoctors() {
           name: [d.first_name, d.last_name].filter(Boolean).join(' ') || 'Unnamed doctor',
           specialization: d.specialization,
           workingHours: d.working_hours,
+          slotDurationMinutes: d.slot_duration_minutes,
           branchIds: d.branch_ids,
         }))
     }
@@ -86,6 +89,26 @@ export function useCreateDoctor() {
     mutationFn: (payload: DoctorCreateRequest) => createDoctor(payload),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['doctors', 'list'] })
+    },
+  })
+}
+
+export function useUpdateDoctor() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ userId, payload }: { userId: string; payload: DoctorUpdateRequest }) => updateDoctor(userId, payload),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['doctors'] })
+    },
+  })
+}
+
+export function useSetDoctorBranches() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ userId, payload }: { userId: string; payload: BranchAssignmentRequest }) => setDoctorBranches(userId, payload),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['doctors'] })
     },
   })
 }

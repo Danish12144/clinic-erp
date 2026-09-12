@@ -1,7 +1,8 @@
-import { UserPlus, UsersRound } from 'lucide-react'
+import { CalendarClock, UserPlus, UsersRound } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { RoleBadge } from '@/components/staff/role-badge'
 import { InviteStaffDialog } from '@/components/staff/invite-staff-dialog'
+import { EditDoctorScheduleDialog } from '@/components/staff/edit-doctor-schedule-dialog'
 import { EmptyState } from '@/components/shared/empty-state'
 import { StatusBadge } from '@/components/shared/status-badge'
 import { Button } from '@/components/ui/button'
@@ -9,6 +10,7 @@ import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { useDoctors } from '@/features/doctors/hooks'
+import type { DoctorSummary } from '@/features/doctors/types'
 import { useStaff } from '@/features/staff/hooks'
 import { useDebouncedValue } from '@/lib/use-debounced-value'
 
@@ -20,11 +22,13 @@ interface DirectoryRow {
   phone: string | null
   status: string
   detail: string | null
+  doctor: DoctorSummary | null
 }
 
 export function StaffDirectoryPage() {
   const [searchTerm, setSearchTerm] = useState('')
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [scheduleDoctor, setScheduleDoctor] = useState<DoctorSummary | null>(null)
   const debouncedTerm = useDebouncedValue(searchTerm, 350)
 
   const staffQuery = useStaff({ q: debouncedTerm, includeInactive: true })
@@ -40,6 +44,7 @@ export function StaffDirectoryPage() {
       phone: s.phone,
       status: s.status,
       detail: s.designation,
+      doctor: null,
     }))
     const doctorRows: DirectoryRow[] = (doctorsQuery.data?.items ?? []).map((d) => ({
       userId: d.user_id,
@@ -49,6 +54,7 @@ export function StaffDirectoryPage() {
       phone: d.phone,
       status: d.status,
       detail: d.specialization,
+      doctor: d,
     }))
     return [...doctorRows, ...staffRows].sort((a, b) => a.name.localeCompare(b.name))
   }, [staffQuery.data, doctorsQuery.data])
@@ -83,13 +89,14 @@ export function StaffDirectoryPage() {
               <TableHead>Email</TableHead>
               <TableHead>Phone</TableHead>
               <TableHead>Status</TableHead>
+              <TableHead className="text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {isLoading &&
               Array.from({ length: 5 }).map((_, i) => (
                 <TableRow key={i}>
-                  {Array.from({ length: 6 }).map((__, j) => (
+                  {Array.from({ length: 7 }).map((__, j) => (
                     <TableCell key={j}>
                       <Skeleton className="h-4 w-full max-w-28" />
                     </TableCell>
@@ -99,7 +106,7 @@ export function StaffDirectoryPage() {
 
             {!isLoading && rows.length === 0 && (
               <TableRow className="hover:bg-transparent">
-                <TableCell colSpan={6}>
+                <TableCell colSpan={7}>
                   <EmptyState
                     icon={UsersRound}
                     title="No staff found"
@@ -122,6 +129,14 @@ export function StaffDirectoryPage() {
                   <TableCell>
                     <StatusBadge status={row.status} />
                   </TableCell>
+                  <TableCell className="text-right">
+                    {row.doctor && (
+                      <Button variant="ghost" size="sm" className="gap-1.5" onClick={() => setScheduleDoctor(row.doctor)}>
+                        <CalendarClock className="size-4" />
+                        Edit schedule
+                      </Button>
+                    )}
+                  </TableCell>
                 </TableRow>
               ))}
           </TableBody>
@@ -129,6 +144,13 @@ export function StaffDirectoryPage() {
       </div>
 
       <InviteStaffDialog open={dialogOpen} onOpenChange={setDialogOpen} />
+      <EditDoctorScheduleDialog
+        doctor={scheduleDoctor}
+        open={scheduleDoctor !== null}
+        onOpenChange={(next) => {
+          if (!next) setScheduleDoctor(null)
+        }}
+      />
     </div>
   )
 }

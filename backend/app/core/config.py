@@ -135,12 +135,12 @@ class Settings(BaseSettings):
     # app/modules/billing/payment_gateway.py.
     payment_gateway_provider: str = "mock"
 
-    # Pre-launch testing accommodations — both default to the permissive
-    # setting so live end-to-end testing isn't blocked by rules that only
-    # matter once a real clinic is operating. Each is a deliberate,
-    # temporary relaxation (same "explicit opt-in for demo/staging" shape as
-    # otp_static_code above), not a redesign of the underlying business
-    # rule — flip back to strict once real launch hardening starts.
+    # Pre-launch testing accommodation — permissive by default so live
+    # end-to-end testing isn't blocked by a rule that only matters once a
+    # real clinic is operating (same "explicit opt-in for demo/staging"
+    # shape as otp_static_code above), not a redesign of the underlying
+    # business rule — flip back to strict once real launch hardening
+    # starts.
     #
     # appointment_enforce_working_hours: when False (default), scheduled
     # appointment booking/reschedule (AppointmentService._validate_slot)
@@ -149,13 +149,18 @@ class Settings(BaseSettings):
     # check-in was never gated by this at all (see checkin module notes).
     appointment_enforce_working_hours: bool = False
 
-    # pharmacy_auto_replenish_stock: when True (default), a dispense/OTC
+    # pharmacy_auto_replenish_stock: Phase 1 (Master Handoff §6 "Production
+    # safety rules") made this default OFF — stock must never be fabricated
+    # just because a dispense/OTC sale would otherwise fail. When True, a
     # sale that can't be fully covered by existing medicine_batches
     # auto-receives a fresh batch for exactly the shortfall (logged as a
     # real RECEIVE inventory transaction, same as a manual stock receipt)
     # instead of hard-failing with 409 "Insufficient stock" — see
-    # app/modules/pharmacy/service.py::_auto_replenish_stock.
-    pharmacy_auto_replenish_stock: bool = True
+    # app/modules/pharmacy/service.py::_auto_replenish_stock. This is
+    # useful for local/demo testing against an empty catalog, so it stays
+    # available as an explicit opt-in (PHARMACY_AUTO_REPLENISH_STOCK=true)
+    # — it must never be enabled against a database with real stock.
+    pharmacy_auto_replenish_stock: bool = False
 
     @property
     def is_production(self) -> bool:

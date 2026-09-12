@@ -13,7 +13,7 @@ app/modules/auth/models.py::StaffInvite for why.
 import uuid
 from datetime import datetime
 
-from sqlalchemy import ForeignKey, Numeric, String, Text, UniqueConstraint, DateTime, func, text
+from sqlalchemy import ForeignKey, Numeric, SmallInteger, String, Text, UniqueConstraint, DateTime, func, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -31,6 +31,14 @@ class DoctorProfile(Base):
     registration_number: Mapped[str | None] = mapped_column(String, nullable=True)
     consultation_fee: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
     working_hours: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    # Phase 1 (migration 0033) — how far apart the staff Appointments
+    # page's slot grid renders bookable times for this doctor. Purely a
+    # scheduling-display concern, distinct from a specific appointment's
+    # own `duration_minutes` (which a caller can still set to anything
+    # 5-240 regardless of this default). Matches the frontend's previous
+    # hardcoded 15-minute constant, so this column changes nothing for a
+    # doctor nobody has explicitly reconfigured.
+    slot_duration_minutes: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default=text("15"))
     bio: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

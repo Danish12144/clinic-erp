@@ -6,6 +6,8 @@ unreachable).
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError, ProgrammingError
 
 from app.modules.tenancy.models import Clinic
 
@@ -515,4 +517,57 @@ async def test_doctor_cannot_create_a_payment_order(api_client: AsyncClient, own
     await api_client.post(f"/api/v1/billing/invoices/{invoice_id}/issue", headers=owner_headers)
 
     response = await api_client.post(f"/api/v1/billing/invoices/{invoice_id}/create-payment-order", headers=doctor_headers)
+    assert response.status_code == 403
+
+
+async def test_payments_table_is_db_enforced_append_only(db_session, api_client: AsyncClient, owner_headers: dict[str, str], test_clinic: Clinic) -> None:
+    """Phase 1 hardening (migration 0031): app_user has UPDATE/DELETE
+    revoked on `payments`, and a BEFORE UPDATE OR DELETE trigger raises
+    even for a role that somehow still had the grant — same double
+    protection `vitals`/`prescriptions`/`audit_logs` already have. Uses a
+    real payment row (not just a random id) so this exercises the actual
+    protection path, not just "no row matched."
+    """
+    branch_id = await _create_branch(api_client, owner_headers, "AppendOnlyBranch")
+    doctor_id, doctor_headers = await _create_active_doctor(api_client, owner_headers, test_clinic, phone="+919878000040")
+    patient_id = await _create_patient(api_client, owner_headers, phone="+919878000041")
+    encounter_id = await _register_walk_in(api_client, owner_headers, patient_id=patient_id, branch_id=branch_id, doctor_id=doctor_id)
+    await _start_consultation(api_client, doctor_headers, encounter_id=encounter_id)
+    generated = await api_client.post("/api/v1/billing/invoices/auto-generate", json={"encounter_id": encounter_id}, headers=owner_headers)
+    invoice_id = generated.json()["id"]
+    await api_client.post(f"/api/v1/billing/invoices/{invoice_id}/issue", headers=owner_headers)
+    payment = await api_client.post(
+        "/api/v1/billing/payments", json={"invoice_id": invoice_id, "amount": "500.00", "method": "CASH"}, headers=owner_headers
+    )
+    payment_id = payment.json()["id"]
+
+    with pytest.raises((DBAPIError, ProgrammingError)):
+        await db_session.execute(text("UPDATE payments SET amount = amount + 1 WHERE id = :id"), {"id": payment_id})
+        await db_session.commit()
+    await db_session.rollback()
+
+    with pytest.raises((DBAPIError, ProgrammingError)):
+        await db_session.execute(text("DELETE FROM payments WHERE id = :id"), {"id": payment_id})
+        await db_session.commit()
+    await db_session.rollback()
+
+
+async def test_export_invoices_csv(api_client: AsyncClient, owner_headers: dict[str, str], test_clinic: Clinic) -> None:
+    """Phase 1 (Master Handoff item 6, "Basic reports & billing export")."""
+    branch_id = await _create_branch(api_client, owner_headers, "ExportBranch")
+    patient_id = await _create_patient(api_client, owner_headers, phone="+919878000050")
+    invoice = await _create_draft_invoice(api_client, owner_headers, branch_id=branch_id, patient_id=patient_id)
+    await api_client.post(f"/api/v1/billing/invoices/{invoice['id']}/issue", headers=owner_headers)
+
+    response = await api_client.get("/api/v1/billing/invoices/export", headers=owner_headers)
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/csv")
+    body = response.text
+    assert "Invoice ID" in body.splitlines()[0]
+    assert invoice["id"] in body
+
+
+async def test_export_invoices_csv_requires_a_read_permission(api_client: AsyncClient, login_as) -> None:
+    headers, _ = await login_as(role_code="NURSE")
+    response = await api_client.get("/api/v1/billing/invoices/export", headers=headers)
     assert response.status_code == 403

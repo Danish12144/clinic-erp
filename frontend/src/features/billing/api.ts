@@ -87,3 +87,20 @@ export async function recordPayment(payload: PaymentCreateRequest): Promise<Paym
   const { data } = await apiClient.post<PaymentSummary>('/billing/payments', payload)
   return data
 }
+
+// Phase 1 (Master Handoff item 6) — same filters as searchInvoices, a CSV
+// file instead of JSON. `status` (not `status_filter`) is deliberately not
+// renamed on the frontend side even though the backend's alias mirrors
+// searchInvoices' own naming, to stay consistent with InvoiceSearchParams.
+export async function exportInvoicesCsv(params: Pick<InvoiceSearchParams, 'branchId' | 'patientId' | 'encounterId' | 'status'>): Promise<Blob> {
+  const { data } = await apiClient.get<Blob>('/billing/invoices/export', {
+    params: {
+      branch_id: params.branchId || undefined,
+      patient_id: params.patientId || undefined,
+      encounter_id: params.encounterId || undefined,
+      status: params.status || undefined,
+    },
+    responseType: 'blob',
+  })
+  return data
+}

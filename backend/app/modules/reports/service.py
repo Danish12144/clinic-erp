@@ -11,6 +11,8 @@ pass is silently overridden, not merely validated, same pattern
 schedule.
 """
 
+import csv
+import io
 import uuid
 from datetime import datetime, time, timedelta, timezone
 from decimal import Decimal
@@ -106,3 +108,37 @@ class ReportsService:
             by_service_type=[ServiceTypeRevenue(source_type=s, total_billed=t) for s, t in by_service],
             by_payment_mode=[PaymentModeAmount(method=m, collected=c, refunded=r) for m, c, r in by_method],
         )
+
+    async def export_financial_report_csv(
+        self, *, tenant_id: uuid.UUID, period: ReportPeriod, date_from: datetime | None, date_to: datetime | None,
+        branch_id: uuid.UUID | None, doctor_id: uuid.UUID | None, actor_role: str, actor_user_id: uuid.UUID,
+    ) -> str:
+        """Phase 1 (Master Handoff item 6, "Basic reports & billing
+        export") — reuses `get_financial_report` itself (same filters,
+        same row-scoping) so the CSV can never disagree with the JSON
+        endpoint's own numbers; just reshapes the same three summary
+        sections into three small CSV blocks in one file."""
+        report = await self.get_financial_report(
+            tenant_id=tenant_id, period=period, date_from=date_from, date_to=date_to,
+            branch_id=branch_id, doctor_id=doctor_id, actor_role=actor_role, actor_user_id=actor_user_id,
+        )
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow(["Period", report.period])
+        writer.writerow(["Date From", report.date_from.isoformat() if report.date_from else ""])
+        writer.writerow(["Date To", report.date_to.isoformat() if report.date_to else ""])
+        writer.writerow(["Total Billed", report.total_billed])
+        writer.writerow(["Total Collected", report.total_collected])
+        writer.writerow(["Total Refunded", report.total_refunded])
+        writer.writerow(["Net Collected", report.net_collected])
+        writer.writerow([])
+        writer.writerow(["Revenue By Service Type"])
+        writer.writerow(["Source Type", "Total Billed"])
+        for row in report.by_service_type:
+            writer.writerow([row.source_type, row.total_billed])
+        writer.writerow([])
+        writer.writerow(["Revenue By Payment Mode"])
+        writer.writerow(["Method", "Collected", "Refunded"])
+        for row in report.by_payment_mode:
+            writer.writerow([row.method, row.collected, row.refunded])
+        return buffer.getvalue()

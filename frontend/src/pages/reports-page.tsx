@@ -1,6 +1,8 @@
-import { BarChart3, IndianRupee, Receipt, RefreshCcw, Wallet } from 'lucide-react'
+import { BarChart3, Download, IndianRupee, Receipt, RefreshCcw, Wallet } from 'lucide-react'
 import { useState } from 'react'
+import { toast } from 'sonner'
 import { EmptyState } from '@/components/shared/empty-state'
+import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -10,8 +12,11 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { useAuth } from '@/features/auth/auth-context'
 import { useBranches } from '@/features/branches/hooks'
 import { useBookableDoctors } from '@/features/doctors/hooks'
+import { exportFinancialReportCsv } from '@/features/reports/api'
 import { useBillingSummary, useFinancialReport } from '@/features/reports/hooks'
 import { REPORT_PERIODS, type ReportPeriod } from '@/features/reports/types'
+import { downloadBlob } from '@/lib/download'
+import { getErrorMessage } from '@/lib/errors'
 
 function formatMoney(value: string): string {
   return `₹${Number(value).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
@@ -55,6 +60,7 @@ export function ReportsPage() {
   const [dateTo, setDateTo] = useState('')
   const [branchId, setBranchId] = useState('')
   const [doctorId, setDoctorId] = useState('')
+  const [exporting, setExporting] = useState(false)
 
   const queryParams = {
     period,
@@ -69,13 +75,31 @@ export function ReportsPage() {
 
   const customRangeIncomplete = period === 'custom' && (!dateFrom || !dateTo)
 
+  async function onExportCsv() {
+    setExporting(true)
+    try {
+      const blob = await exportFinancialReportCsv(queryParams)
+      downloadBlob(blob, 'financial-report.csv')
+    } catch (error) {
+      toast.error('Could not export report', { description: getErrorMessage(error) })
+    } finally {
+      setExporting(false)
+    }
+  }
+
   return (
     <div className="flex flex-col gap-4 p-4 sm:p-6">
-      <div>
-        <h1 className="text-xl font-semibold text-slate-900 dark:text-slate-50">Reports & Analytics</h1>
-        <p className="text-sm text-slate-500 dark:text-slate-400">
-          {isOwnerScope ? 'Revenue and collections across your clinic.' : 'Revenue and collections for your own consultations.'}
-        </p>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-semibold text-slate-900 dark:text-slate-50">Reports & Analytics</h1>
+          <p className="text-sm text-slate-500 dark:text-slate-400">
+            {isOwnerScope ? 'Revenue and collections across your clinic.' : 'Revenue and collections for your own consultations.'}
+          </p>
+        </div>
+        <Button variant="outline" className="gap-1.5" onClick={onExportCsv} disabled={exporting || customRangeIncomplete}>
+          <Download className="size-4" />
+          {exporting ? 'Exporting…' : 'Export CSV'}
+        </Button>
       </div>
 
       <div className="flex flex-wrap items-end gap-3">

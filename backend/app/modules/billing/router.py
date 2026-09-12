@@ -12,6 +12,14 @@ Doctor/Patient have no access to `payments.*` at all (matrix: Doctor "–",
 Patient "O read" — satisfied by payments being nested inside
 `InvoiceSummary.payments`, not a separate grant).
 
+Phase 1 (migration 0032) added `billing.view` — tenant-wide, read-only,
+unscoped like `billing.manage` rather than row-scoped like
+`billing.view_own` (BillingService's row-scoping is keyed on
+`actor_role`, never on which permission let the caller through) — for a
+finance/accounts persona granted it via a per-user permission override,
+not a new role. It's in `_READ_PERMS` alongside the other two, and also
+widens the standalone payments-list route below.
+
 The static `/me` route is declared before `/{invoice_id}` so FastAPI
 matches it first, same reasoning as Appointments' `/me` routes.
 """
@@ -19,6 +27,7 @@ matches it first, same reasoning as Appointments' `/me` routes.
 import uuid
 
 from fastapi import APIRouter, Depends, Query, status
+from fastapi.responses import Response
 
 from app.api.deps import CurrentUser, require_any_permission, require_permission
 from app.modules.billing.models import InvoiceStatus
@@ -41,7 +50,7 @@ from app.modules.billing.service import BillingService, PaymentService
 invoice_router = APIRouter(prefix="/api/v1/billing/invoices", tags=["billing:invoices"])
 payment_router = APIRouter(prefix="/api/v1/billing/payments", tags=["billing:payments"])
 
-_READ_PERMS = ("billing.manage", "billing.view_own")
+_READ_PERMS = ("billing.manage", "billing.view_own", "billing.view")
 
 
 def get_billing_service() -> BillingService:
@@ -87,6 +96,29 @@ async def search_invoices(
     return await service.search_invoices(
         tenant_id=current_user.tenant_id, branch_id=branch_id, patient_id=patient_id, encounter_id=encounter_id,
         status_filter=status_filter, actor_role=current_user.role_code, actor_user_id=current_user.user_id, limit=limit, offset=offset,
+    )
+
+
+@invoice_router.get("/export", response_class=Response)
+async def export_invoices_csv(
+    branch_id: uuid.UUID | None = Query(None),
+    patient_id: uuid.UUID | None = Query(None),
+    encounter_id: uuid.UUID | None = Query(None),
+    status_filter: InvoiceStatus | None = Query(None, alias="status"),
+    current_user: CurrentUser = Depends(require_any_permission(*_READ_PERMS)),
+    service: BillingService = Depends(get_billing_service),
+) -> Response:
+    """Phase 1 (Master Handoff item 6) — same filters and row-scoping as
+    `search_invoices`, just serialized as a CSV file instead of JSON.
+    Declared before `/{invoice_id}` so FastAPI matches this static path
+    first, same reasoning as the `/me` route below."""
+    csv_body = await service.export_invoices_csv(
+        tenant_id=current_user.tenant_id, branch_id=branch_id, patient_id=patient_id, encounter_id=encounter_id,
+        status_filter=status_filter, actor_role=current_user.role_code, actor_user_id=current_user.user_id,
+    )
+    return Response(
+        content=csv_body, media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=invoices.csv"},
     )
 
 
@@ -199,7 +231,11 @@ async def search_payments(
     invoice_id: uuid.UUID | None = Query(None),
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
-    current_user: CurrentUser = Depends(require_permission("payments.record")),
+    # Also open to billing.view (Phase 1 Accountant bundle, migration
+    # 0032) — a finance user reconciling collected money across every
+    # invoice at once is the more useful shape of this endpoint for them
+    # than the per-invoice nested `payments` on InvoiceSummary.
+    current_user: CurrentUser = Depends(require_any_permission("payments.record", "billing.view")),
     service: PaymentService = Depends(get_payment_service),
 ) -> PaymentListResponse:
     return await service.search_payments(tenant_id=current_user.tenant_id, invoice_id=invoice_id, limit=limit, offset=offset)
